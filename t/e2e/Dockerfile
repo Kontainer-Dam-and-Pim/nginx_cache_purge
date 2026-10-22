@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         wget ca-certificates python3 wrk gdb procps psmisc curl util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-ARG NGINX_VERSION=1.30.5
+ARG NGINX_VERSION=1.30.6
 RUN wget -q https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz \
     && tar xzf nginx-${NGINX_VERSION}.tar.gz \
     && mv nginx-${NGINX_VERSION} /nginx-src \

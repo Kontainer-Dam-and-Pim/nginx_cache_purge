@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        nginx_version: ['1.26.3', '1.28.2', '1.29.6']
+        nginx_version: ['1.26.3', '1.28.2', '1.29.6', '1.30.6']
         ubuntu_version: ['20.04', '24.04']
         include:
           - nginx_version: '1.20.2'

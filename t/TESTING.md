@@ -40,7 +40,7 @@ docker run --rm -v "$PWD/..:/src" ngx-cache-purge-test:1.28.2 prove -v t/basic.t
 | `make build` | Build `ngx-cache-purge-test:<version>` image |
 | `make test` | basic.t + config.t only |
 | `make test-all` | All five suites |
-| `make test-compat` | Build + test across 1.20.2 / 1.26.3 / 1.28.2 / 1.29.6 |
+| `make test-compat` | Build + test across 1.20.2 / 1.26.3 / 1.28.2 / 1.29.6 / 1.30.6 |
 | `make test-version VERSION=x.y.z` | One specific version |
 | `make shell` | Interactive shell in the container |
 | `make clean` | Remove cache dirs, servroot, containers |

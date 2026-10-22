@@ -4,7 +4,7 @@
 #   t/e2e/run.sh [quick|scale|chaos] [harness options...]
 #
 # Environment:
-#   NGINX_VERSION   nginx to build (default 1.30.5)
+#   NGINX_VERSION   nginx to build (default 1.30.6)
 #   E2E_SANITIZE    "asan" for an AddressSanitizer build
 #   E2E_DATA_DIR    host directory for cache + origin data
 #                   (default t/e2e/.data/<profile>)
@@ -18,7 +18,7 @@ cd "$root"
 profile=${1:-quick}
 [ $# -gt 0 ] && shift
 
-version=${NGINX_VERSION:-1.30.5}
+version=${NGINX_VERSION:-1.30.6}
 sanitize=${E2E_SANITIZE:-}
 image=${E2E_IMAGE:-ngx-cache-purge-e2e}:${version}${sanitize:+-$sanitize}
 data=${E2E_DATA_DIR:-$root/t/e2e/.data/$profile}

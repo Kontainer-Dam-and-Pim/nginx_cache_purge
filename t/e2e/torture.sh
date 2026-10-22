@@ -14,7 +14,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
 
-version=${NGINX_VERSION:-1.30.5}
+version=${NGINX_VERSION:-1.30.6}
 sanitize=${E2E_SANITIZE:-}
 image=${E2E_IMAGE:-ngx-cache-purge-e2e}:${version}${sanitize:+-$sanitize}
 

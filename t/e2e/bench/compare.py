@@ -38,7 +38,7 @@ def load(d, mode, build):
 def main():
     d = sys.argv[1]
     a = sys.argv[sys.argv.index("--a") + 1] if "--a" in sys.argv else "base"
-    b = sys.argv[sys.argv.index("--b") + 1] if "--b" in sys.argv else "1.30.5"
+    b = sys.argv[sys.argv.index("--b") + 1] if "--b" in sys.argv else "1.30.6"
     for mode in ("inline", "threads"):
         ra, rb = load(d, mode, a), load(d, mode, b)
         if not ra or not rb:

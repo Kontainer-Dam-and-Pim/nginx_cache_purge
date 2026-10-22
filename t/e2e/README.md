@@ -27,7 +27,7 @@ are still there.
 
 | Path | What |
 |---|---|
-| `Dockerfile` | ubuntu 24.04, nginx 1.30.5 + module, `SANITIZE=asan` option, wrk, gdb |
+| `Dockerfile` | ubuntu 24.04, nginx 1.30.6 + module, `SANITIZE=asan` option, wrk, gdb |
 | `tools/cachegen.c` | `seed`: writes cache files (real `ngx_http_file_cache_header_t`, crc32, md5 paths, levels=1:2), multi-threaded, sparse or real bytes. `scan`: counts files and KEY prefix matches on disk. `key`: one key of the set. |
 | `harness/e2e.py` | profiles and phases |
 | `harness/phases.py` | nginx configs, verifier, purge driver, latency prober, consistency, audit, chaos actions |
@@ -166,7 +166,7 @@ medians of `<mode>-<build>-<rep>.json` runs side by side.
 
 ```bash
 docker run --rm --ulimit nofile=200000:200000 -v $PWD/t/e2e/bench:/b:ro \
-    --entrypoint python3 ngx-cache-purge-e2e:1.30.5 /b/bench.py [--threads] [--only exact_hit,walk]
+    --entrypoint python3 ngx-cache-purge-e2e:1.30.6 /b/bench.py [--threads] [--only exact_hit,walk]
 ```
 
 For an A/B, build the image of the other commit from a worktree

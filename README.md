@@ -62,10 +62,11 @@ for changes and [distribution packages](#distribution-packages) for packaged bui
 | 1.26.x | ✓ tested   |
 | 1.28.x | ✓ tested   |
 | 1.29.x | ✓ tested   |
+| 1.30.x | ✓ tested   |
 
 CI runs the Test::Nginx suites against the versions above. The key index,
 thread pool and end-to-end suites have also been run by hand against 1.28.3,
-1.30.4, 1.30.5 and 1.31.6, including under AddressSanitizer. Older releases
+1.30.4, 1.30.5, 1.30.6 and 1.31.6, including under AddressSanitizer. Older releases
 back to 1.7.9 compile but are not covered by CI.
 
 ---
@@ -899,7 +900,7 @@ OF THE POSSIBILITY OF SUCH DAMAGE.
 - The original default branch ends on [23 December 2014](https://github.com/FRiCKLE/ngx_cache_purge/commit/331fe43e8d9a3d1fa5e0c9fec7d3201d431a9177). As of this check, twelve full years have not elapsed.
 - **Avoid “fully non-blocking.”** Without `cache_purge_thread_pool`, background walks and index builds do their disk I/O on the event loop, in slices of `cache_purge_walk_budget`. Exact-key purges are always synchronous, and `cache_purge_vary_aware` adds a synchronous directory walk to each one.
 - **Do not promise unchanged behavior for every upgrade.** The 2.5 status-code change alone makes that inaccurate. Release 3.0.0 also flags internal breaking changes.
-- **Describe CI configuration accurately.** The workflow targets NGINX 1.20.2, 1.26.3, 1.28.2 and 1.29.6. Runs on 1.28.3, 1.30.x and 1.31.6 were done by hand, not in CI.
+- **Describe CI configuration accurately.** The workflow targets NGINX 1.20.2, 1.26.3, 1.28.2, 1.29.6 and 1.30.6. Runs on 1.28.3, 1.30.4, 1.30.5 and 1.31.6 were done by hand, not in CI.
 - **Keep package links factual.** Downstream packaging demonstrates use of the source, not endorsement, an audit, or a support commitment from that distribution to this repository.
 
 ---

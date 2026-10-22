@@ -58,7 +58,7 @@ test-all: build
 
 test-compat:
 	@echo "$(GREEN)Compatibility test across supported nginx versions...$(NC)"
-	@for v in 1.20.2 1.26.3 1.28.2 1.29.6; do \
+	@for v in 1.20.2 1.26.3 1.28.2 1.29.6 1.30.6; do \
 	    echo "$(YELLOW)--- nginx $$v ---$(NC)"; \
 	    $(MAKE) --no-print-directory NGINX_VERSION=$$v build test-all || exit 1; \
 	done
