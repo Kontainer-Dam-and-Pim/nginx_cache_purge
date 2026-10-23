@@ -836,6 +836,8 @@ ngx_int_t  ngx_http_cache_purge_init(ngx_http_request_t *r,
                ngx_http_file_cache_t *cache,
                ngx_http_complex_value_t *cache_key);
 void       ngx_http_cache_purge_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_cache_purge_dispatch(ngx_http_request_t *r,
+    ngx_http_file_cache_t *cache);
 ngx_int_t  ngx_http_file_cache_purge(ngx_http_request_t *r);
 ngx_int_t  ngx_http_cache_purge_all(ngx_http_request_t *r,
                ngx_http_file_cache_t *cache);
@@ -8245,17 +8247,10 @@ ngx_http_fastcgi_cache_purge_handler(ngx_http_request_t *r)
 {
     ngx_http_file_cache_t            *cache;
     ngx_http_fastcgi_loc_conf_t      *flcf;
-    ngx_http_cache_purge_loc_conf_t  *cplcf;
-    ngx_http_cache_purge_main_conf_t *cmcf;
-    ngx_str_t                         status;
-    ngx_str_t                        *key;
-    ngx_uint_t                        deleted;  /* C89: declared at top of scope */
 #  if (nginx_version >= 1007009)
     ngx_http_fastcgi_main_conf_t     *fmcf;
     ngx_int_t                         rc;
 #  endif
-
-    ngx_str_set(&status, "purged");
 
     if (ngx_http_upstream_create(r) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -8280,56 +8275,7 @@ ngx_http_fastcgi_cache_purge_handler(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    cmcf  = ngx_http_get_module_main_conf(r, ngx_http_cache_purge_module);
-    cplcf = ngx_http_get_module_loc_conf(r,  ngx_http_cache_purge_module);
-
-    if (cmcf != NULL && cmcf->background_purge
-        && (cplcf->conf->purge_all || ngx_http_cache_purge_is_partial(r)))
-    {
-        key = r->cache->keys.elts;
-        if (ngx_http_cache_purge_try_enqueue(r, cache, &key[0],
-                                             cplcf->conf->purge_all)
-            == NGX_DONE)
-        {
-            return NGX_DONE;
-        }
-    }
-
-    if (cplcf->conf->purge_all) {
-        /* purge_all empties the zone -- 200 however many files existed,
-         * 500 if some of it could not be read.  Skip
-         * ngx_http_cache_purge_handler() so we never attempt an exact-key
-         * lookup on a bulk operation. */
-        rc = ngx_http_cache_purge_all(r, cache);
-        r->main->count++;
-        ngx_http_finalize_request(r, (rc == NGX_OK)
-            ? ngx_http_cache_purge_send_response(r, &status)
-            : NGX_HTTP_INTERNAL_SERVER_ERROR);
-        return NGX_DONE;
-    }
-
-    if (ngx_http_cache_purge_is_partial(r)) {
-        deleted = ngx_http_cache_purge_partial(r, cache);
-        /* Return 200 only when at least one matching file was deleted.
-         * On a complete miss return 412/404 per cache_purge_legacy_status. */
-        r->main->count++;
-        if (deleted > 0) {
-            ngx_http_finalize_request(r,
-                ngx_http_cache_purge_send_response(r, &status));
-        } else {
-            ngx_http_finalize_request(r,
-                (cmcf != NULL && cmcf->legacy_status_codes)
-                         ? NGX_HTTP_PRECONDITION_FAILED
-                         : NGX_HTTP_NOT_FOUND);
-        }
-        return NGX_DONE;
-    }
-
-    r->main->count++;
-
-    ngx_http_cache_purge_handler(r);
-
-    return NGX_DONE;
+    return ngx_http_cache_purge_dispatch(r, cache);
 }
 # endif /* NGX_HTTP_FASTCGI */
 
@@ -8574,10 +8520,6 @@ ngx_http_proxy_cache_purge_handler(ngx_http_request_t *r)
     ngx_http_file_cache_t            *cache;
     ngx_http_proxy_loc_conf_t        *plcf;
     ngx_http_cache_purge_loc_conf_t  *cplcf;
-    ngx_http_cache_purge_main_conf_t *cmcf;
-    ngx_str_t                         status;
-    ngx_str_t                        *key;
-    ngx_uint_t                        deleted;  /* C89: declared at top of scope */
 #  if (nginx_version >= 1007009)
     ngx_http_proxy_main_conf_t       *pmcf;
     ngx_int_t                         rc;
@@ -8586,8 +8528,6 @@ ngx_http_proxy_cache_purge_handler(ngx_http_request_t *r)
     ngx_http_file_cache_t           **caches;   /* C89: declared at top of scope */
     ngx_str_t                         cv_val;   /* C89: declared at top of scope */
 #  endif
-
-    ngx_str_set(&status, "purged");
 
     cplcf = ngx_http_get_module_loc_conf(r, ngx_http_cache_purge_module);
 
@@ -8675,50 +8615,7 @@ ngx_http_proxy_cache_purge_handler(ngx_http_request_t *r)
         }
     }
 
-    cmcf  = ngx_http_get_module_main_conf(r, ngx_http_cache_purge_module);
-    cplcf = ngx_http_get_module_loc_conf(r,  ngx_http_cache_purge_module);
-
-    if (cmcf != NULL && cmcf->background_purge
-        && (cplcf->conf->purge_all || ngx_http_cache_purge_is_partial(r)))
-    {
-        key = r->cache->keys.elts;
-        if (ngx_http_cache_purge_try_enqueue(r, cache, &key[0],
-                                             cplcf->conf->purge_all)
-            == NGX_DONE)
-        {
-            return NGX_DONE;
-        }
-    }
-
-    if (cplcf->conf->purge_all) {
-        rc = ngx_http_cache_purge_all(r, cache);
-        r->main->count++;
-        ngx_http_finalize_request(r, (rc == NGX_OK)
-            ? ngx_http_cache_purge_send_response(r, &status)
-            : NGX_HTTP_INTERNAL_SERVER_ERROR);
-        return NGX_DONE;
-    }
-
-    if (ngx_http_cache_purge_is_partial(r)) {
-        deleted = ngx_http_cache_purge_partial(r, cache);
-        r->main->count++;
-        if (deleted > 0) {
-            ngx_http_finalize_request(r,
-                ngx_http_cache_purge_send_response(r, &status));
-        } else {
-            ngx_http_finalize_request(r,
-                (cmcf != NULL && cmcf->legacy_status_codes)
-                         ? NGX_HTTP_PRECONDITION_FAILED
-                         : NGX_HTTP_NOT_FOUND);
-        }
-        return NGX_DONE;
-    }
-
-    r->main->count++;
-
-    ngx_http_cache_purge_handler(r);
-
-    return NGX_DONE;
+    return ngx_http_cache_purge_dispatch(r, cache);
 }
 # endif /* NGX_HTTP_PROXY */
 
@@ -8866,17 +8763,10 @@ ngx_http_scgi_cache_purge_handler(ngx_http_request_t *r)
 {
     ngx_http_file_cache_t            *cache;
     ngx_http_scgi_loc_conf_t         *slcf;
-    ngx_http_cache_purge_loc_conf_t  *cplcf;
-    ngx_http_cache_purge_main_conf_t *cmcf;
-    ngx_str_t                         status;
-    ngx_str_t                        *key;
-    ngx_uint_t                        deleted;  /* C89: declared at top of scope */
 #  if (nginx_version >= 1007009)
     ngx_http_scgi_main_conf_t        *smcf;
     ngx_int_t                         rc;
 #  endif
-
-    ngx_str_set(&status, "purged");
 
     if (ngx_http_upstream_create(r) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -8901,50 +8791,7 @@ ngx_http_scgi_cache_purge_handler(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    cmcf  = ngx_http_get_module_main_conf(r, ngx_http_cache_purge_module);
-    cplcf = ngx_http_get_module_loc_conf(r,  ngx_http_cache_purge_module);
-
-    if (cmcf != NULL && cmcf->background_purge
-        && (cplcf->conf->purge_all || ngx_http_cache_purge_is_partial(r)))
-    {
-        key = r->cache->keys.elts;
-        if (ngx_http_cache_purge_try_enqueue(r, cache, &key[0],
-                                             cplcf->conf->purge_all)
-            == NGX_DONE)
-        {
-            return NGX_DONE;
-        }
-    }
-
-    if (cplcf->conf->purge_all) {
-        rc = ngx_http_cache_purge_all(r, cache);
-        r->main->count++;
-        ngx_http_finalize_request(r, (rc == NGX_OK)
-            ? ngx_http_cache_purge_send_response(r, &status)
-            : NGX_HTTP_INTERNAL_SERVER_ERROR);
-        return NGX_DONE;
-    }
-
-    if (ngx_http_cache_purge_is_partial(r)) {
-        deleted = ngx_http_cache_purge_partial(r, cache);
-        r->main->count++;
-        if (deleted > 0) {
-            ngx_http_finalize_request(r,
-                ngx_http_cache_purge_send_response(r, &status));
-        } else {
-            ngx_http_finalize_request(r,
-                (cmcf != NULL && cmcf->legacy_status_codes)
-                         ? NGX_HTTP_PRECONDITION_FAILED
-                         : NGX_HTTP_NOT_FOUND);
-        }
-        return NGX_DONE;
-    }
-
-    r->main->count++;
-
-    ngx_http_cache_purge_handler(r);
-
-    return NGX_DONE;
+    return ngx_http_cache_purge_dispatch(r, cache);
 }
 # endif /* NGX_HTTP_SCGI */
 
@@ -9116,17 +8963,10 @@ ngx_http_uwsgi_cache_purge_handler(ngx_http_request_t *r)
 {
     ngx_http_file_cache_t            *cache;
     ngx_http_uwsgi_loc_conf_t        *ulcf;
-    ngx_http_cache_purge_loc_conf_t  *cplcf;
-    ngx_http_cache_purge_main_conf_t *cmcf;
-    ngx_str_t                         status;
-    ngx_str_t                        *key;
-    ngx_uint_t                        deleted;  /* C89: declared at top of scope */
 #  if (nginx_version >= 1007009)
     ngx_http_uwsgi_main_conf_t       *umcf;
     ngx_int_t                         rc;
 #  endif
-
-    ngx_str_set(&status, "purged");
 
     if (ngx_http_upstream_create(r) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -9151,50 +8991,7 @@ ngx_http_uwsgi_cache_purge_handler(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    cmcf  = ngx_http_get_module_main_conf(r, ngx_http_cache_purge_module);
-    cplcf = ngx_http_get_module_loc_conf(r,  ngx_http_cache_purge_module);
-
-    if (cmcf != NULL && cmcf->background_purge
-        && (cplcf->conf->purge_all || ngx_http_cache_purge_is_partial(r)))
-    {
-        key = r->cache->keys.elts;
-        if (ngx_http_cache_purge_try_enqueue(r, cache, &key[0],
-                                             cplcf->conf->purge_all)
-            == NGX_DONE)
-        {
-            return NGX_DONE;
-        }
-    }
-
-    if (cplcf->conf->purge_all) {
-        rc = ngx_http_cache_purge_all(r, cache);
-        r->main->count++;
-        ngx_http_finalize_request(r, (rc == NGX_OK)
-            ? ngx_http_cache_purge_send_response(r, &status)
-            : NGX_HTTP_INTERNAL_SERVER_ERROR);
-        return NGX_DONE;
-    }
-
-    if (ngx_http_cache_purge_is_partial(r)) {
-        deleted = ngx_http_cache_purge_partial(r, cache);
-        r->main->count++;
-        if (deleted > 0) {
-            ngx_http_finalize_request(r,
-                ngx_http_cache_purge_send_response(r, &status));
-        } else {
-            ngx_http_finalize_request(r,
-                (cmcf != NULL && cmcf->legacy_status_codes)
-                         ? NGX_HTTP_PRECONDITION_FAILED
-                         : NGX_HTTP_NOT_FOUND);
-        }
-        return NGX_DONE;
-    }
-
-    r->main->count++;
-
-    ngx_http_cache_purge_handler(r);
-
-    return NGX_DONE;
+    return ngx_http_cache_purge_dispatch(r, cache);
 }
 # endif /* NGX_HTTP_UWSGI */
 
@@ -9696,6 +9493,66 @@ ngx_http_cache_purge_init(ngx_http_request_t *r, ngx_http_file_cache_t *cache,
 
 
 /* -- purge dispatch ----------------------------------------------------- */
+
+static ngx_int_t
+ngx_http_cache_purge_dispatch(ngx_http_request_t *r,
+    ngx_http_file_cache_t *cache)
+{
+    ngx_http_cache_purge_main_conf_t  *cmcf;
+    ngx_http_cache_purge_loc_conf_t   *cplcf;
+    ngx_str_t                          status;
+    ngx_str_t                         *key;
+    ngx_uint_t                         deleted;
+    ngx_int_t                          rc;
+
+    ngx_str_set(&status, "purged");
+
+    cmcf  = ngx_http_get_module_main_conf(r, ngx_http_cache_purge_module);
+    cplcf = ngx_http_get_module_loc_conf(r,  ngx_http_cache_purge_module);
+
+    if (cmcf != NULL && cmcf->background_purge
+        && (cplcf->conf->purge_all || ngx_http_cache_purge_is_partial(r)))
+    {
+        key = r->cache->keys.elts;
+        if (ngx_http_cache_purge_try_enqueue(r, cache, &key[0],
+                                             cplcf->conf->purge_all)
+            == NGX_DONE)
+        {
+            return NGX_DONE;
+        }
+    }
+
+    if (cplcf->conf->purge_all) {
+        rc = ngx_http_cache_purge_all(r, cache);
+        r->main->count++;
+        ngx_http_finalize_request(r, (rc == NGX_OK)
+            ? ngx_http_cache_purge_send_response(r, &status)
+            : NGX_HTTP_INTERNAL_SERVER_ERROR);
+        return NGX_DONE;
+    }
+
+    if (ngx_http_cache_purge_is_partial(r)) {
+        deleted = ngx_http_cache_purge_partial(r, cache);
+        r->main->count++;
+        if (deleted > 0) {
+            ngx_http_finalize_request(r,
+                ngx_http_cache_purge_send_response(r, &status));
+        } else {
+            ngx_http_finalize_request(r,
+                (cmcf != NULL && cmcf->legacy_status_codes)
+                         ? NGX_HTTP_PRECONDITION_FAILED
+                         : NGX_HTTP_NOT_FOUND);
+        }
+        return NGX_DONE;
+    }
+
+    r->main->count++;
+
+    ngx_http_cache_purge_handler(r);
+
+    return NGX_DONE;
+}
+
 
 void
 ngx_http_cache_purge_handler(ngx_http_request_t *r)
