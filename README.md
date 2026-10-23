@@ -2,12 +2,17 @@
 
 An nginx module that adds cache purge support for `FastCGI`, `proxy`, `SCGI`,
 and `uWSGI` caches. A purge operation removes the cached entry whose key
-matches the purge request. This repository maintains a fork of
-[FRiCKLE/ngx_cache_purge](https://github.com/FRiCKLE/ngx_cache_purge), with
-compatibility updates, bug fixes, and additional purge features.
+matches the purge request.
 
-See the [release notes](https://github.com/nginx-modules/ngx_cache_purge/releases)
-for changes and [distribution packages](#distribution-packages) for packaged builds.
+This is Kontainer's fork of
+[nginx-modules/ngx_cache_purge](https://github.com/nginx-modules/ngx_cache_purge),
+itself the maintained continuation of
+[FRiCKLE/ngx_cache_purge](https://github.com/FRiCKLE/ngx_cache_purge). It
+adds a shared-memory key index, thread pool offload, a crash- and
+reload-safe background queue, a status endpoint, and CI that builds and
+tests every nginx release from 1.20.0 on. It is developed independently;
+upstream fixes are ported when they apply. [Build it from
+source](#build-from-source); changes are in the commit history.
 
 ---
 
@@ -15,7 +20,6 @@ for changes and [distribution packages](#distribution-packages) for packaged bui
 
 - [Features](#features)
 - [Compatibility](#compatibility)
-- [Distribution packages](#distribution-packages)
 - [Build from source](#build-from-source)
 - [Directives](#directives)
 - [Partial key purge](#partial-key-purge)
@@ -28,7 +32,7 @@ for changes and [distribution packages](#distribution-packages) for packaged bui
 - [Migration](#migration)
 - [Security](#security)
 - [License](#license)
-- [Technical and historical notes](#technical-and-historical-notes)
+- [Design notes](#design-notes)
 
 ---
 
@@ -47,8 +51,10 @@ for changes and [distribution packages](#distribution-packages) for packaged bui
   so a wildcard purge costs what it matches instead of a directory walk
 - **Thread pool offload** — optional: reading keys and unlinking files
   happens in an nginx thread pool, keeping the event loop free
-- **Vary-aware purge** — after an exact-key purge, removes all filesystem
+- **Vary-aware purge** — an exact-key purge also removes all filesystem
   variants (gzip, Vary header) sharing the same cache key
+- **Status endpoint** — `cache_purge_status` reports the queue and the key
+  indexes as JSON
 - **Response types** — `html` (default), `json`, `xml`, `text`
 - **No dependencies** — nginx and libc only
 
@@ -77,37 +83,11 @@ for changes and [distribution packages](#distribution-packages) for packaged bui
 CI builds and tests every nginx release from the oldest above on, listed in
 [`t/nginx-versions.json`](t/nginx-versions.json): it checks that the module's
 copies of nginx-private structs match each release's own layout and runs the
-Test::Nginx suites. A scheduled job opens a pull request adding each new
-nginx release to the matrix. The key index,
-thread pool and end-to-end suites have also been run by hand against 1.28.3,
-1.30.4, 1.30.5, 1.30.6 and 1.31.6, including under AddressSanitizer. Older releases
-back to 1.7.9 compile but are not covered by CI.
-
----
-
-### Distribution packages
-
-The package and ports definitions below reference this fork. They are maintained
-by their respective downstream projects; versions and available features vary
-by release and repository branch.
-
-| System | Package or port | Packaging source / details |
-| --- | --- | --- |
-| Debian | [`libnginx-mod-http-cache-purge`](https://packages.debian.org/trixie/libnginx-mod-http-cache-purge) | [Package tracker](https://tracker.debian.org/pkg/libnginx-mod-http-cache-purge); [unstable package](https://packages.debian.org/sid/libnginx-mod-http-cache-purge) |
-| Ubuntu 26.04 LTS | [`libnginx-mod-http-cache-purge`](https://packages.ubuntu.com/resolute/libnginx-mod-http-cache-purge) | Universe; check the package for your Ubuntu release |
-| Arch Linux | [`nginx-mod-cache_purge`](https://archlinux.org/packages/extra/x86_64/nginx-mod-cache_purge/) | Official Extra repository; [PKGBUILD](https://gitlab.archlinux.org/archlinux/packaging/packages/nginx-mod-cache_purge/-/blob/main/PKGBUILD) |
-| Arch Linux AUR | [`nginx-mainline-mod-cache_purge`](https://aur.archlinux.org/packages/nginx-mainline-mod-cache_purge) | User-maintained build recipe for `nginx-mainline`; [PKGBUILD](https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=nginx-mainline-mod-cache_purge) |
-| Alpine Linux | [`nginx-mod-http-cache-purge`](https://pkgs.alpinelinux.org/package/edge/main/x86/nginx-mod-http-cache-purge) | [APKBUILD](https://gitlab.alpinelinux.org/alpine/aports/-/blob/master/main/nginx/APKBUILD); select your branch and architecture on the package site |
-| FreeBSD / NGINX | [`www/nginx-module-cache-purge`](https://cgit.freebsd.org/ports/tree/www/nginx-module-cache-purge) | Module sources for the NGINX ports; [Makefile](https://cgit.freebsd.org/ports/tree/www/nginx-module-cache-purge/Makefile) |
-| FreeBSD / Angie | [`www/angie-module-cache-purge`](https://cgit.freebsd.org/ports/tree/www/angie-module-cache-purge) | Dynamic module for Angie; [Makefile](https://cgit.freebsd.org/ports/tree/www/angie-module-cache-purge/Makefile) |
-
-Older packages with the same name may use a different upstream. Debian switched
-to this fork in version `1:2.5.3-1`; Ubuntu 24.04's published package is still
-based on 2.3. Check your package's source and changelog when upgrading.
-
-Use a module build compatible with your installed NGINX package. Distribution
-modules may depend on a specific NGINX version or ABI, and 2.x packages do not
-provide the background queue directives introduced in 3.x.
+Test::Nginx suites. The newest release also runs them under AddressSanitizer
+with leak detection, UndefinedBehaviorSanitizer and valgrind. A scheduled job
+opens a pull request adding each new nginx release to the matrix. The module
+keeps version guards back to nginx 1.7.9; releases before 1.20.0 are not
+tested.
 
 ---
 
@@ -126,6 +106,9 @@ Dynamic module:
 ./configure --add-dynamic-module=/path/to/ngx_cache_purge
 make modules
 ```
+
+To load it into an nginx you already run, build it against the same nginx
+version and `configure` arguments (`nginx -V` prints both).
 
 `cache_purge_thread_pool` needs nginx built with `--with-threads`. Everything
 else works on a default build.
@@ -202,6 +185,38 @@ Equivalent to `proxy_cache_purge` but for uWSGI cache zones configured with
 `uwsgi_cache` / `uwsgi_cache_path`.
 
 
+### `cache_purge_status`
+
+```
+Syntax:  cache_purge_status;
+Default: —
+Context: location
+```
+
+Answers `GET` and `HEAD` in this location with the state of the background
+queue and the key indexes, as JSON, with `Cache-Control: no-store`; other
+methods get `405`. Restrict the location like a purge location.
+
+```json
+{"queue":{"size":3,"max_size":1024,"in_progress":10,"backing_off":1,
+          "enqueued":5120,"coalesced":312,"rejected":0,"completed":5107,
+          "requeued":2,"dropped":0},
+ "indexes":[{"zone":"images","state":"ready","entries":2481173,"failures":0}]}
+```
+
+`queue` is `null` without `cache_purge_background_queue`. `size` counts
+queued purges, `in_progress` those a walk is carrying out and `backing_off`
+those waiting to be retried after a failed pass. The counters run from the
+queue's creation (a restart, or a reset after a crash inside a queue change)
+and carry over a reload: purges `enqueued`, `coalesced` into an identical
+waiting purge, `rejected` with `429`, `completed`, `requeued` after a failed
+or crashed pass, and `dropped` (see `cache_purge_background_queue`). A purge
+that keeps failing is retried until `cache_purge_queue_timeout`, if set;
+`requeued` and `backing_off` show it. Index `state` is `pending`, `building`,
+`ready`, `rebuild` or `failed` (wildcards walk the disk meanwhile);
+`failures` counts builds failed in a row.
+
+
 ### `cache_purge_response_type`
 
 ```
@@ -211,7 +226,7 @@ Context: http, server, location
 ```
 
 Sets the `Content-Type` and body format of purge responses. Has no effect on
-cache-miss responses (412 / 404), which are generated by nginx's built-in
+error responses (412 / 404 / 500 ...), which are generated by nginx's built-in
 error-page renderer.
 
 
@@ -444,10 +459,9 @@ when `cache_purge_background_queue on`.
 
 Increase on constrained or spinning-disk storage; decrease on NVMe.
 
-**Time-unit note:** a bare integer with no suffix (e.g. `10`) is interpreted
-as milliseconds — matching the `_ms` directive name — and a startup warning is
-logged. Use an explicit `ms` suffix (`10ms`) to silence the warning. This
-differs from most nginx time directives, where a bare integer means seconds.
+**Time-unit note:** like every nginx time directive, a bare integer with no
+suffix means seconds, whatever the `_ms` in the name: `10` is ten seconds.
+Write the unit: `10ms`.
 
 
 ### `cache_purge_legacy_status`
@@ -479,8 +493,11 @@ Default: off
 Context: http
 ```
 
-When `on`, an exact-key purge walks the cache directory after deleting the
-primary file and removes any remaining files that carry the same `KEY:` string.
+When `on`, an exact-key purge walks the cache directory and removes every file
+that carries the same `KEY:` string. It walks whether or not the purge found
+the file of its own variant: a PURGE without `Accept-Encoding` still removes
+the gzip variant. The purge is `200` if it deleted anything, and `500` if the
+walk could not read the cache or delete a variant.
 This covers all `Vary` and `gzip_vary` variants of a cached response, which
 are stored at different filesystem paths but share one logical key. The byte
 immediately after the key string in each file is verified to be `\n`,
@@ -745,12 +762,14 @@ Purge answers:
 |---|---|
 | `200` | purged |
 | `202` | accepted; the rest is carried out in the background |
-| `400` | wildcard key too long (512 bytes) |
+| `400` | wildcard key too long (512 bytes), or a malformed request body |
 | `403` | client not in the allowed list |
 | `404` / `412` | nothing matched (see `cache_purge_legacy_status`) |
 | `429` | background queue full |
+| `500` | a matching file could not be deleted, or the cache could not be read: the purge did not complete |
 
-The response body uses the format set by `cache_purge_response_type`.
+The response body uses the format set by `cache_purge_response_type`. For the
+background queue and the key indexes, see [`cache_purge_status`](#cache_purge_status).
 
 Relevant log messages (all start with `ngx_cache_purge:`):
 
@@ -760,7 +779,7 @@ Relevant log messages (all start with `ngx_cache_purge:`):
 | `notice` | index build or refresh started |
 | `warn` | queue full; refresh found files the index did not know |
 | `error` | cache zone not found; queued purge timed out |
-| `crit` | file deletion failed; `opendir()` failed; index full (wildcards fall back to walks); index build failed; out of shared memory |
+| `crit` | file deletion failed (a synchronous purge answers `500`); `opendir()` failed; index full (wildcards fall back to walks); index build failed; out of shared memory |
 | `alert` | a process died while updating the queue or an index, which is reset |
 
 ```bash
@@ -806,26 +825,22 @@ Enable `cache_purge_vary_aware on`.
 
 ## Testing
 
-The test suite uses [Test::Nginx](https://github.com/openresty/test-nginx).
+The suites use [Test::Nginx](https://github.com/openresty/test-nginx) and run
+in Docker; [`t/TESTING.md`](t/TESTING.md) has the details.
 
 ```bash
-prove -r t/
+cd t
+make test-all       # every suite, newest nginx in t/nginx-versions.json
+make sanitize       # the same under ASan (with leak detection) and UBSan
+make valgrind       # the same under valgrind memcheck
+make compat         # the module's nginx-private struct copies vs this nginx
+make analyze        # strict warnings, cppcheck, clang and gcc analyzers
+make test-compat    # compat + test-all for every release CI tests
+NGINX_VERSION=1.26.3 make test-all
 ```
 
-Individual suites:
-
-```bash
-prove t/basic.t
-prove t/background_queue.t
-prove t/config.t
-prove t/memory.t
-prove t/performance.t
-prove t/index.t
-prove t/index_threads.t   # needs nginx built with --with-threads
-```
-
-See [`t/TESTING.md`](t/TESTING.md) for Docker-based testing and the full
-testing guide.
+CI (`.github/workflows`) runs all of it on every pull request, plus CodeQL,
+Semgrep and linters for the workflows, shell and Python.
 
 ### End-to-end and torture suites
 
@@ -844,6 +859,19 @@ t/e2e/torture.sh            # targeted fault injection, with and without a threa
 ---
 
 ## Migration
+
+### From nginx-modules/ngx_cache_purge
+
+Configurations for upstream's 2.x and 3.x carry over, except a few this fork
+rejects at startup because they did not do what they said: `purge_all from`
+with no address list, `from all` followed by addresses, a
+`cache_purge_throttle_ms` or `cache_purge_index_reconcile` of 0, and a
+`cache_purge_index_sync_limit` above 1048576. Upstream's 4.x is a
+rewrite with its own HTTP contract (`200 no_match` instead of `412`/`404`,
+JSON by default, `cache_purge_legacy_status` ignored) and directives this
+fork does not have (`cache_purge_namespace`, `cache_purge_key`,
+`proxy_cache_refresh`); its `cache_purge_queue_status` is
+`cache_purge_status` here, with different fields.
 
 ### From the original FRiCKLE module
 
@@ -867,7 +895,11 @@ and `cache_purge_throttle_ms`.
 ## Security
 
 - Restrict purge endpoints with `allow` / `deny` directives or an upstream
-  authentication layer. Never expose them publicly.
+  authentication layer. Never expose them publicly. `from all` takes no
+  addresses after it: `from all 10.0.0.1` is a configuration error, not a
+  list.
+- Restrict `cache_purge_status` locations the same way: they name the cache
+  zones.
 - Set `cache_purge_queue_size` to a value appropriate for your traffic to
   limit shared memory consumption under request floods.
 - Consider pairing purge locations with `limit_req` to rate-limit purge
@@ -909,13 +941,16 @@ OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ---
 
-## Technical and historical notes
+## Design notes
 
-- The original default branch ends on [23 December 2014](https://github.com/FRiCKLE/ngx_cache_purge/commit/331fe43e8d9a3d1fa5e0c9fec7d3201d431a9177). As of this check, twelve full years have not elapsed.
-- **Avoid “fully non-blocking.”** Without `cache_purge_thread_pool`, background walks and index builds do their disk I/O on the event loop, in slices of `cache_purge_walk_budget`. Exact-key purges are always synchronous, and `cache_purge_vary_aware` adds a synchronous directory walk to each one.
-- **Do not promise unchanged behavior for every upgrade.** The 2.5 status-code change alone makes that inaccurate. Release 3.0.0 also flags internal breaking changes.
-- **Describe CI configuration accurately.** The workflow targets the versions in [`t/nginx-versions.json`](t/nginx-versions.json). Runs on 1.28.3, 1.30.4, 1.30.5 and 1.31.6 were done by hand, not in CI.
-- **Keep package links factual.** Downstream packaging demonstrates use of the source, not endorsement, an audit, or a support commitment from that distribution to this repository.
+- Without `cache_purge_thread_pool`, background walks and index builds do
+  their disk I/O on the event loop, in slices of `cache_purge_walk_budget`.
+- Exact-key purges are always synchronous, and `cache_purge_vary_aware` adds
+  a synchronous directory walk to each one.
+- The module reads nginx's private proxy/fastcgi/scgi/uwsgi configuration
+  structs through copies of their declarations. CI compares each copy with
+  the layout of every nginx release it tests, so a release that changes one
+  fails CI instead of reading the wrong memory.
 
 ---
 
