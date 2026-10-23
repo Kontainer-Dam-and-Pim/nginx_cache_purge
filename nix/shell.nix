@@ -37,8 +37,15 @@
         packages = [
           self'.packages.default
           (pkgs.perl.withPackages (_: [ testNginx ]))
+          pkgs.actionlint
+          pkgs.clang-tools
           pkgs.cppcheck
+          pkgs.jq
+          pkgs.pahole
           pkgs.python3
+          pkgs.ruff
+          pkgs.shellcheck
+          pkgs.zizmor
         ]
         ++ lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.valgrind;
       };

@@ -1,81 +1,56 @@
 # t/Dockerfile — build context is always the repo root
-ARG UBUNTU_VERSION=22.04
+#
+#   docker build -f t/Dockerfile --build-arg NGINX_VERSION=x.y.z --build-arg UBUNTU_VERSION=24.04 .
+#   ... --build-arg CC=clang --build-arg SANITIZE=asan,ubsan     nginx and the module under sanitizers
+ARG UBUNTU_VERSION
 FROM ubuntu:${UBUNTU_VERSION}
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Allow nginx version to be passed in from CI matrix
-ARG NGINX_VERSION=1.24.0
-ENV NGINX_VERSION=${NGINX_VERSION}
-
 # Prioritized mirrors
 ARG UBUNTU_MIRROR=azure
-RUN . /etc/os-release && \
-    \
-    # Resolve mirror URL from ARG
-    case "${UBUNTU_MIRROR}" in \
-        azure)   MIRROR_URL="http://azure.archive.ubuntu.com/ubuntu/" ;; \
-        kernel)  MIRROR_URL="http://mirrors.kernel.org/ubuntu/" ;; \
-        *)       echo "Unknown UBUNTU_MIRROR: ${UBUNTU_MIRROR}"; exit 1 ;; \
+RUN case "${UBUNTU_MIRROR}" in \
+        azure)  MIRROR_URL="http://azure.archive.ubuntu.com/ubuntu/" ;; \
+        kernel) MIRROR_URL="http://mirrors.kernel.org/ubuntu/" ;; \
+        *)      echo "Unknown UBUNTU_MIRROR: ${UBUNTU_MIRROR}"; exit 1 ;; \
     esac && \
-    \
-    # 1. Identify the active config file (Standard vs 24.04+ DEB822 format)
-    if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then \
-        TARGET="/etc/apt/sources.list.d/ubuntu.sources"; \
-        # For 24.04+, replace URIs with selected mirror
-        sed -i "s|http://archive.ubuntu.com/ubuntu/|${MIRROR_URL}|g"  "$TARGET"; \
-        sed -i "s|http://security.ubuntu.com/ubuntu/|${MIRROR_URL}|g" "$TARGET"; \
-    else \
-        TARGET="/etc/apt/sources.list"; \
-        # For 22.04 and below, replace URIs with selected mirror
-        sed -i "s|http://archive.ubuntu.com/ubuntu/|${MIRROR_URL}|g"  "$TARGET"; \
-        sed -i "s|http://security.ubuntu.com/ubuntu/|${MIRROR_URL}|g" "$TARGET"; \
-    fi
+    for f in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do \
+        [ -f "$f" ] || continue; \
+        sed -i -e "s|http://archive.ubuntu.com/ubuntu/|${MIRROR_URL}|g" \
+               -e "s|http://security.ubuntu.com/ubuntu/|${MIRROR_URL}|g" "$f"; \
+    done
 
-# Install dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libpcre3-dev \
-    libssl-dev \
-    zlib1g-dev \
-    libgd-dev \
-    libgeoip-dev \
-    libxml2-dev \
-    libxslt1-dev \
-    wget \
-    curl \
-    git \
-    perl \
-    cpanminus \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential clang cppcheck dwarves jq \
+        libpcre2-dev libssl-dev zlib1g-dev \
+        $(apt-cache show libpcre3-dev >/dev/null 2>&1 && echo libpcre3-dev) \
+        $(apt-cache show libclang-rt-dev >/dev/null 2>&1 && echo libclang-rt-dev) \
+        ca-certificates wget curl perl cpanminus make python3 valgrind \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Test::Nginx and dependencies
 RUN cpanm --notest \
     Test::Nginx \
     Test::More \
     Test::Base \
     Test::LongString \
-    List::MoreUtils \
-    IO::Socket::SSL \
-    TAP::Formatter::JUnit
+    List::MoreUtils
 
-# Download and extract nginx
-RUN wget http://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz \
+ARG NGINX_VERSION
+RUN test -n "${NGINX_VERSION}" \
+    && wget -q https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz \
     && tar xzf nginx-${NGINX_VERSION}.tar.gz \
+    && mv nginx-${NGINX_VERSION} /nginx-src \
     && rm nginx-${NGINX_VERSION}.tar.gz
 
-# Create working directory
-WORKDIR /src
+COPY t/ci/build-nginx.sh /usr/local/bin/
+COPY config ngx_cache_purge_module.c /module/
 
-# Copy module source
-COPY . /src/
-
-# Build nginx with the module
-RUN cd /nginx-${NGINX_VERSION} && \
-    ./configure \
+ARG CC=gcc
+ARG SANITIZE=
+RUN build-nginx.sh /nginx-src "${SANITIZE}" \
+        --with-cc="${CC}" \
         --prefix=/etc/nginx \
         --sbin-path=/usr/sbin/nginx \
-        --modules-path=/usr/lib/nginx/modules \
         --conf-path=/etc/nginx/nginx.conf \
         --error-log-path=/var/log/nginx/error.log \
         --http-log-path=/var/log/nginx/access.log \
@@ -99,69 +74,21 @@ RUN cd /nginx-${NGINX_VERSION} && \
         --with-http_secure_link_module \
         --with-http_stub_status_module \
         --with-http_auth_request_module \
-        --with-http_xslt_module=dynamic \
-        --with-http_image_filter_module=dynamic \
-        --with-http_geoip_module=dynamic \
         --with-threads \
         --with-stream \
         --with-stream_ssl_module \
         --with-stream_ssl_preread_module \
         --with-stream_realip_module \
-        --with-stream_geoip_module=dynamic \
         --with-http_slice_module \
         --with-file-aio \
         --with-http_v2_module \
-        --add-module=/src && \
-    make && \
-    make install
+        --add-module=/module \
+    && mkdir -p /var/cache/nginx/client_temp \
+        /var/cache/nginx/proxy_temp \
+        /var/cache/nginx/fastcgi_temp \
+        /var/cache/nginx/uwsgi_temp \
+        /var/cache/nginx/scgi_temp
 
-# Create nginx cache directories
-RUN mkdir -p /var/cache/nginx/client_temp \
-    /var/cache/nginx/proxy_temp \
-    /var/cache/nginx/fastcgi_temp \
-    /var/cache/nginx/uwsgi_temp \
-    /var/cache/nginx/scgi_temp
-
-# Set working directory for tests
 WORKDIR /src
 
-# Create convenience test runner script
-RUN echo '#!/bin/bash\n\
-set -e\n\
-\n\
-# purge_servroot: remove the Test::Nginx work directory between test\n\
-# files so that a failed test cannot leave stale nginx workers or open\n\
-# file descriptors that cause the next prove(1) invocation to bail out\n\
-# with "Directory not empty" when setting up a fresh servroot.\n\
-purge_servroot() { rm -rf /src/t/servroot; }\n\
-\n\
-echo "Starting nginx cache purge module tests..."\n\
-\n\
-rm -rf cache/ logs/ t/servroot/\n\
-\n\
-mkdir -p cache logs\n\
-\n\
-echo "Running basic tests..."\n\
-prove -v t/basic.t; purge_servroot\n\
-\n\
-echo "Running background queue tests..."\n\
-prove -v t/background_queue.t; purge_servroot\n\
-\n\
-echo "Running configuration tests..."\n\
-prove -v t/config.t; purge_servroot\n\
-\n\
-echo "Running memory tests..."\n\
-prove -v t/memory.t; purge_servroot\n\
-\n\
-echo "Running performance tests..."\n\
-prove -v t/performance.t; purge_servroot\n\
-echo "Running index tests..."\n\
-prove -v t/index.t\n\
-echo "Running thread pool index tests..."\n\
-prove -v t/index_threads.t\n\
-\n\
-echo "All tests completed successfully!"\n\
-' > /usr/local/bin/run_tests.sh && chmod +x /usr/local/bin/run_tests.sh
-
-# Default command
-CMD ["/usr/local/bin/run_tests.sh"]
+CMD ["t/ci/run-suite.sh"]

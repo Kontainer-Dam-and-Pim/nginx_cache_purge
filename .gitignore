@@ -1,8 +1,8 @@
 t/e2e/.data/
 t/e2e/results/
 __pycache__/
-/cache/
 /t/servroot/
+/t/analysis/
 
 # nix
 /.direnv/
