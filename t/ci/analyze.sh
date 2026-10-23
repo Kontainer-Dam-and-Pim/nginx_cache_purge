@@ -46,12 +46,7 @@ gcc -O1 -fanalyzer -fdiagnostics-format=sarif-file "${incs[@]}" \
 mv "${module##*/}.sarif" "$out/gcc-analyzer.sarif"
 
 for f in "$out"/*.sarif; do
-    jq --arg root "$repo/" \
-        'walk(if type == "object" and (.uri | type) == "string"
-              then .uri |= (sub("^file://"; "") | ltrimstr($root))
-              elif type == "object" and has("startLine")
-              then with_entries(select((.value | type) != "number" or .value >= 1))
-              else . end)' \
+    jq --arg root "$repo/" -f "$repo/t/ci/sarif.jq" \
         "$f" > "$f.tmp"
     mv "$f.tmp" "$f"
 done
