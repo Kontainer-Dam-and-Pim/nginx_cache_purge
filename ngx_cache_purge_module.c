@@ -9965,16 +9965,77 @@ ngx_http_cache_purge_is_partial(ngx_http_request_t *r)
 
 /* -- configuration parser ----------------------------------------------- */
 
+static char *
+ngx_http_cache_purge_conf_address(ngx_conf_t *cf,
+    ngx_http_cache_purge_conf_t *cpcf, ngx_str_t *addr, ngx_uint_t n)
+{
+    ngx_cidr_t       cidr;
+    ngx_in_cidr_t   *access;
+# if (NGX_HAVE_INET6)
+    ngx_in6_cidr_t  *access6;
+# endif
+    ngx_int_t        rc;
+
+    rc = ngx_ptocidr(addr, &cidr);
+
+    if (rc == NGX_ERROR) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+            "invalid parameter \"%V\"", addr);
+        return NGX_CONF_ERROR;
+    }
+
+    if (rc == NGX_DONE) {
+        ngx_conf_log_error(NGX_LOG_WARN, cf, 0,
+            "low address bits of %V are meaningless", addr);
+    }
+
+    switch (cidr.family) {
+    case AF_INET:
+        if (cpcf->access == NULL) {
+            cpcf->access = ngx_array_create(cf->pool, n,
+                                           sizeof(ngx_in_cidr_t));
+            if (cpcf->access == NULL) {
+                return NGX_CONF_ERROR;
+            }
+        }
+
+        access = ngx_array_push(cpcf->access);
+        if (access == NULL) {
+            return NGX_CONF_ERROR;
+        }
+
+        access->mask = cidr.u.in.mask;
+        access->addr = cidr.u.in.addr;
+        break;
+
+# if (NGX_HAVE_INET6)
+    case AF_INET6:
+        if (cpcf->access6 == NULL) {
+            cpcf->access6 = ngx_array_create(cf->pool, n,
+                                            sizeof(ngx_in6_cidr_t));
+            if (cpcf->access6 == NULL) {
+                return NGX_CONF_ERROR;
+            }
+        }
+
+        access6 = ngx_array_push(cpcf->access6);
+        if (access6 == NULL) {
+            return NGX_CONF_ERROR;
+        }
+
+        access6->mask = cidr.u.in6.mask;
+        access6->addr = cidr.u.in6.addr;
+        break;
+# endif
+    }
+
+    return NGX_CONF_OK;
+}
+
 char *
 ngx_http_cache_purge_conf(ngx_conf_t *cf, ngx_http_cache_purge_conf_t *cpcf)
 {
-    ngx_cidr_t      cidr;
-    ngx_in_cidr_t  *access;
-# if (NGX_HAVE_INET6)
-    ngx_in6_cidr_t *access6;
-# endif
     ngx_str_t      *value;
-    ngx_int_t       rc;
     ngx_uint_t      i, from_position;
 
     from_position = 2;
@@ -10027,59 +10088,10 @@ ngx_http_cache_purge_conf(ngx_conf_t *cf, ngx_http_cache_purge_conf_t *cpcf)
     }
 
     for (i = from_position + 1; i < cf->args->nelts; i++) {
-        rc = ngx_ptocidr(&value[i], &cidr);
-
-        if (rc == NGX_ERROR) {
-            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                "invalid parameter \"%V\"", &value[i]);
+        if (ngx_http_cache_purge_conf_address(cf, cpcf, &value[i],
+                cf->args->nelts - (from_position + 1)) != NGX_CONF_OK)
+        {
             return NGX_CONF_ERROR;
-        }
-
-        if (rc == NGX_DONE) {
-            ngx_conf_log_error(NGX_LOG_WARN, cf, 0,
-                "low address bits of %V are meaningless", &value[i]);
-        }
-
-        switch (cidr.family) {
-        case AF_INET:
-            if (cpcf->access == NULL) {
-                cpcf->access = ngx_array_create(cf->pool,
-                    cf->args->nelts - (from_position + 1),
-                    sizeof(ngx_in_cidr_t));
-                if (cpcf->access == NULL) {
-                    return NGX_CONF_ERROR;
-                }
-            }
-
-            access = ngx_array_push(cpcf->access);
-            if (access == NULL) {
-                return NGX_CONF_ERROR;
-            }
-
-            access->mask = cidr.u.in.mask;
-            access->addr = cidr.u.in.addr;
-            break;
-
-# if (NGX_HAVE_INET6)
-        case AF_INET6:
-            if (cpcf->access6 == NULL) {
-                cpcf->access6 = ngx_array_create(cf->pool,
-                    cf->args->nelts - (from_position + 1),
-                    sizeof(ngx_in6_cidr_t));
-                if (cpcf->access6 == NULL) {
-                    return NGX_CONF_ERROR;
-                }
-            }
-
-            access6 = ngx_array_push(cpcf->access6);
-            if (access6 == NULL) {
-                return NGX_CONF_ERROR;
-            }
-
-            access6->mask = cidr.u.in6.mask;
-            access6->addr = cidr.u.in6.addr;
-            break;
-# endif
         }
     }
 
