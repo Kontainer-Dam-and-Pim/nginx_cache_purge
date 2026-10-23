@@ -17,6 +17,7 @@ t/
 │   ├── struct_layout.py    #   module's nginx-private struct copies vs nginx (DWARF)
 │   ├── analyze.sh          #   strict warnings, cppcheck, clang/gcc analyzers (SARIF)
 │   ├── ubsan.supp          #   UBSan findings inside nginx itself, not the module
+│   ├── lsan.supp           #   the one allocation nginx core leaves to process exit
 │   └── nginx_versions.py   #   matrix, README table, new nginx releases
 ├── e2e/                    # End-to-end suite (see e2e/README.md)
 ├── basic.t                 # Core purge functionality
@@ -53,8 +54,8 @@ Each CI job has a target that runs the same script.
 | `make build` | Build `ngx-cache-purge-test:<nginx>-<ubuntu>` |
 | `make test` | basic.t + config.t only |
 | `make test-all` | Every Test::Nginx suite |
-| `make compat` | Struct layout check against this nginx, full and minimal (clang, no SSL/PCRE) build |
-| `make sanitize` | Every suite with nginx and the module built with clang under ASan + UBSan |
+| `make compat` | Struct layout check against this nginx, full and minimal (clang, `--with-debug`, no SSL/PCRE) build |
+| `make sanitize` | Every suite with nginx and the module built with clang under ASan (with leak detection) + UBSan |
 | `make valgrind` | Every suite under valgrind memcheck |
 | `make analyze` | Strict gcc/clang warnings, cppcheck, clang and gcc static analyzers (SARIF in `t/analysis/`) |
 | `make test-compat` | `compat` + `test-all` for every pair in `nginx-versions.json` |

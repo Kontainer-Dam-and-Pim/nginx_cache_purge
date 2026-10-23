@@ -12,7 +12,7 @@ mkdir -p "$2"
 out=$(cd "$2" && pwd)
 cd "$1"
 
-./configure --with-threads --with-file-aio --with-http_ssl_module \
+./configure --with-debug --with-threads --with-file-aio --with-http_ssl_module \
     --with-http_v2_module --add-module="$repo" >/dev/null
 # shellcheck disable=SC2016
 read -ra incs <<<"$(make -s -f objs/Makefile -f - print-incs <<<'print-incs: ; @echo $(ALL_INCS)')"
