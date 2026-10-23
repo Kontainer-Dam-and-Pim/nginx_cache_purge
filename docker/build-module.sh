@@ -7,9 +7,11 @@ number=$(echo "$version" | awk -F. '{ printf "%d%03d%03d", $1, $2, $3 }')
 if [ "$number" -lt 1021005 ]; then
     pcre_apk=pcre-dev
     pcre_deb=libpcre3-dev
+    pcre_rpm=pcre-devel
 else
     pcre_apk=pcre2-dev
     pcre_deb=libpcre2-dev
+    pcre_rpm=pcre2-devel
 fi
 
 # shellcheck source=/dev/null
@@ -37,6 +39,10 @@ case $ID in
         apt-get install -y --no-install-recommends \
             build-essential libssl-dev zlib1g-dev "$pcre_deb"
         ;;
+    rocky)
+        dnf -y install gcc make tar gzip redhat-rpm-config \
+            openssl-devel zlib-devel "$pcre_rpm"
+        ;;
     *)
         echo "build-module.sh: no build recipe for $ID" >&2
         exit 1
@@ -48,8 +54,13 @@ curl -fsS --max-time 120 "https://nginx.org/download/nginx-$version.tar.gz" \
 cd "/tmp/nginx-$version"
 
 args=$(nginx -V 2>&1 | sed -n 's/^configure arguments: //p')
+modules=$(echo "$args" | sed -n 's/.*--modules-path=\([^ ]*\).*/\1/p')
+if [ -z "$modules" ]; then
+    echo "build-module.sh: nginx -V names no --modules-path" >&2
+    exit 1
+fi
 eval "./configure $args --add-dynamic-module=/module"
 make modules
 
-mkdir -p /out
-cp objs/ngx_http_cache_purge_module.so /out/
+mkdir -p "/out$modules"
+cp objs/ngx_http_cache_purge_module.so "/out$modules/"

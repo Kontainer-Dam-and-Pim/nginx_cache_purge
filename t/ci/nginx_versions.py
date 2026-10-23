@@ -6,8 +6,10 @@
 usage: nginx_versions.py matrix   GitHub Actions matrix (JSON) of every nginx x Ubuntu pair
        nginx_versions.py pairs    the same pairs, one "nginx ubuntu" per line
        nginx_versions.py latest   the newest nginx in the file
-       nginx_versions.py images   matrix (JSON) of the versions with an official nginx
-                                  image, per variant, the newest marked "latest"
+       nginx_versions.py images   matrix (JSON) of the versions with a base to build an
+                                  image on (an official nginx image, or an nginx.org
+                                  el9 RPM for Rocky), per variant, the newest marked
+                                  "latest"
        nginx_versions.py render   rewrite the README compatibility table from the file
        nginx_versions.py update   add nginx.org releases from the floor on to the file and
                                   the README, print what was added
@@ -27,8 +29,10 @@ VERSIONS = ROOT / "t" / "nginx-versions.json"
 README = ROOT / "README.md"
 DOWNLOADS = "https://nginx.org/download/"
 HUB_TAGS = "https://hub.docker.com/v2/repositories/library/nginx/tags/"
-IMAGE_VARIANTS = ("", "-alpine")
+EL_RPMS = ("https://nginx.org/packages/rhel/9/x86_64/RPMS/",
+           "https://nginx.org/packages/mainline/rhel/9/x86_64/RPMS/")
 TARBALL = re.compile(r"nginx-(\d+)\.(\d+)\.(\d+)\.tar\.gz")
+EL_RPM = re.compile(r"nginx-(\d+)\.(\d+)\.(\d+)-\d+\.el9\.ngx\.x86_64\.rpm")
 TABLE_START = "<!-- nginx-versions:start -->"
 TABLE_END = "<!-- nginx-versions:end -->"
 
@@ -84,13 +88,21 @@ def save(m):
         "}\n")
 
 
-def releases():
-    with urllib.request.urlopen(DOWNLOADS, timeout=30) as resp:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+def listed(url, pattern):
+    with urllib.request.urlopen(url, timeout=30) as resp:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         index = resp.read().decode()
-    found = {tuple(int(x) for x in m) for m in TARBALL.findall(index)}
+    found = {tuple(int(x) for x in m) for m in pattern.findall(index)}
     if not found:
-        raise RuntimeError(f"no nginx tarballs listed at {DOWNLOADS}")
+        raise RuntimeError(f"nothing matching {pattern.pattern} listed at {url}")
     return found
+
+
+def releases():
+    return listed(DOWNLOADS, TARBALL)
+
+
+def el_rpms():
+    return set().union(*(listed(url, EL_RPM) for url in EL_RPMS))
 
 
 def official_image(tag):
@@ -105,9 +117,15 @@ def official_image(tag):
 
 def images(m):
     newest = m.versions[-1][0]
+    rpms = el_rpms()
+    variants = {
+        "": lambda v: official_image(show(v)),
+        "-alpine": lambda v: official_image(show(v) + "-alpine"),
+        "-rocky": lambda v: v in rpms,
+    }
     return [{"nginx": show(v), "variant": variant, "latest": v == newest}
-            for v, _ in m.versions for variant in IMAGE_VARIANTS
-            if official_image(show(v) + variant)]
+            for v, _ in m.versions for variant, available in variants.items()
+            if available(v)]
 
 
 def apply(m, available):

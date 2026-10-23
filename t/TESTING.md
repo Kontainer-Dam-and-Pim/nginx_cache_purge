@@ -104,7 +104,7 @@ on nginx ≥ 1.27:
 |---|---|---|
 | `ci.yml` | push, PR, daily | every release in `nginx-versions.json`: build, struct layouts, Test::Nginx suites; newest nginx also on the old toolchain, under ASan + UBSan and under valgrind |
 | `analysis.yml` | push, PR, weekly | strict warnings + cppcheck (gates); clang/gcc analyzers and CodeQL to code scanning; Semgrep; actionlint, zizmor, shellcheck, pyflakes; README table in sync |
-| `images.yml` | push to master (PR: newest only, not published) | official `nginx:<version>` and `-alpine` images with the module loaded, for every tested version that has one: built, smoke-tested (cache, purge, refill) and pushed to `ghcr.io/kontainer-dam-and-pim/nginx-cache-purge` |
+| `images.yml` | push to master (PR: newest only, not published) | official `nginx:<version>` and `-alpine` images, and Rocky Linux 9 with the nginx.org RPM (`-rocky`), with the module loaded, for every tested version that has one: built, smoke-tested (cache, purge, refill) and pushed to `ghcr.io/kontainer-dam-and-pim/nginx-cache-purge` |
 | `nginx-releases.yml` | daily | adds new nginx.org releases to `nginx-versions.json` and the README in one pull request; dispatches CI on it |
 
 `nginx-versions.json` lists every nginx release from `floor` on, each with

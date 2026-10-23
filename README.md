@@ -94,14 +94,16 @@ tested.
 
 ### Docker images
 
-The official `nginx` image with the module compiled inside it (same libc and
-`configure` arguments) and loaded, for every nginx release CI tests that has
-an official image, Debian and Alpine:
+nginx with the module compiled inside the image (same libc and `configure`
+arguments) and loaded, for every nginx release CI tests that has a base to
+build on: the official `nginx` image, Debian and Alpine, and Rocky Linux 9
+with the nginx.org RPM:
 
 ```bash
 docker pull ghcr.io/kontainer-dam-and-pim/nginx-cache-purge:1.31.8
 docker pull ghcr.io/kontainer-dam-and-pim/nginx-cache-purge:1.31.8-alpine
-docker pull ghcr.io/kontainer-dam-and-pim/nginx-cache-purge:latest   # newest, also :alpine
+docker pull ghcr.io/kontainer-dam-and-pim/nginx-cache-purge:1.31.8-rocky
+docker pull ghcr.io/kontainer-dam-and-pim/nginx-cache-purge:latest   # newest, also :alpine, :rocky
 ```
 
 They behave like `nginx:<version>`: put the configuration in
