@@ -6,6 +6,8 @@
 usage: nginx_versions.py matrix   GitHub Actions matrix (JSON) of every nginx x Ubuntu pair
        nginx_versions.py pairs    the same pairs, one "nginx ubuntu" per line
        nginx_versions.py latest   the newest nginx in the file
+       nginx_versions.py images   matrix (JSON) of the versions with an official nginx
+                                  image, per variant, the newest marked "latest"
        nginx_versions.py render   rewrite the README compatibility table from the file
        nginx_versions.py update   add nginx.org releases from the floor on to the file and
                                   the README, print what was added
@@ -14,6 +16,7 @@ usage: nginx_versions.py matrix   GitHub Actions matrix (JSON) of every nginx x 
 import json
 import re
 import sys
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from itertools import groupby
@@ -23,6 +26,8 @@ ROOT = Path(__file__).resolve().parents[2]
 VERSIONS = ROOT / "t" / "nginx-versions.json"
 README = ROOT / "README.md"
 DOWNLOADS = "https://nginx.org/download/"
+HUB_TAGS = "https://hub.docker.com/v2/repositories/library/nginx/tags/"
+IMAGE_VARIANTS = ("", "-alpine")
 TARBALL = re.compile(r"nginx-(\d+)\.(\d+)\.(\d+)\.tar\.gz")
 TABLE_START = "<!-- nginx-versions:start -->"
 TABLE_END = "<!-- nginx-versions:end -->"
@@ -88,6 +93,23 @@ def releases():
     return found
 
 
+def official_image(tag):
+    try:
+        with urllib.request.urlopen(HUB_TAGS + tag, timeout=30):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+            return True
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return False
+        raise RuntimeError(f"Docker Hub tag lookup of nginx:{tag}: {e}") from e
+
+
+def images(m):
+    newest = m.versions[-1][0]
+    return [{"nginx": show(v), "variant": variant, "latest": v == newest}
+            for v, _ in m.versions for variant in IMAGE_VARIANTS
+            if official_image(show(v) + variant)]
+
+
 def apply(m, available):
     known = dict(m.versions)
     ubuntu = m.versions[-1][1]
@@ -134,6 +156,8 @@ def main(argv):
         print("\n".join(f"{n} {u}" for n, u in load().pairs()))
     elif command == "latest":
         print(show(load().versions[-1][0]))
+    elif command == "images":
+        print(json.dumps(images(load())))
     elif command == "render":
         render(load())
     elif command == "update":
