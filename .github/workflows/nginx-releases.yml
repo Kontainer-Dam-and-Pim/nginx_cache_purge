@@ -1,0 +1,75 @@
+name: nginx releases
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  bump:
+    name: Track nginx releases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    env:
+      BRANCH: bot/nginx-versions
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+      - name: Apply new releases
+        id: update
+        run: |
+          changes=$(t/ci/nginx_versions.py update)
+          if [ -z "$changes" ]; then
+              echo "nginx.org has nothing newer than t/nginx-versions.json"
+              exit 0
+          fi
+          {
+              echo "changes<<EOF"
+              echo "$changes"
+              echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Open or update the pull request
+        if: steps.update.outputs.changes != ''
+        env:
+          CHANGES: ${{ steps.update.outputs.changes }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          if git fetch --quiet origin "$BRANCH" 2>/dev/null \
+              && git diff --quiet FETCH_HEAD -- t/nginx-versions.json README.md; then
+              echo "$BRANCH already carries these versions"
+              exit 0
+          fi
+
+          summary=${CHANGES//$'\n'/, }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -C "$BRANCH"
+          git add t/nginx-versions.json README.md
+          git commit -m "nginx versions: $summary" -m "$CHANGES"
+          git push --force origin "$BRANCH"
+
+          body=$(printf '%s\n\n%s\n%s\n' \
+              "nginx.org has released versions CI does not test yet:" \
+              "- ${CHANGES//$'\n'/$'\n'- }" \
+              "CI builds each one, checks the module's copies of nginx-private structs against its DWARF layout and runs the Test::Nginx suites. A layout mismatch means the struct mirrors in ngx_cache_purge_module.c need a new nginx_version guard before this can merge.")
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+              gh pr edit "$pr" --title "nginx versions: $summary" --body "$body"
+          else
+              gh pr create --base "$BASE" --head "$BRANCH" \
+                  --title "nginx versions: $summary" --body "$body"
+          fi
+
+          gh workflow run ci.yml --ref "$BRANCH"
+          gh workflow run analysis.yml --ref "$BRANCH"

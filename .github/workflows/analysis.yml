@@ -1,0 +1,125 @@
+name: Analysis
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  c:
+    name: Warnings, cppcheck, clang and gcc analyzers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cppcheck jq libpcre2-dev libssl-dev zlib1g-dev
+      - name: Fetch the newest nginx in the matrix
+        run: |
+          version=$(t/ci/nginx_versions.py latest)
+          curl -sSf --max-time 120 "https://nginx.org/download/nginx-$version.tar.gz" | tar xz -C "$RUNNER_TEMP"
+          echo "NGINX_SRC=$RUNNER_TEMP/nginx-$version" >> "$GITHUB_ENV"
+      - run: t/ci/analyze.sh "$NGINX_SRC" "$RUNNER_TEMP/sarif"
+      - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          sarif_file: ${{ runner.temp }}/sarif
+          category: c-analyzers
+
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: c-cpp
+            build-mode: manual
+          - language: python
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended,security-and-quality
+      - name: Build nginx with the module
+        if: matrix.build-mode == 'manual'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpcre2-dev libssl-dev zlib1g-dev
+          version=$(t/ci/nginx_versions.py latest)
+          curl -sSf --max-time 120 "https://nginx.org/download/nginx-$version.tar.gz" | tar xz -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/nginx-$version"
+          ./configure --with-threads --with-file-aio --with-http_ssl_module \
+              --with-http_v2_module --add-module="$GITHUB_WORKSPACE"
+          make -j"$(nproc)"
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}
+
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    container:
+      image: semgrep/semgrep:1.182.0@sha256:4a34048c04fef049f71665047f074cffb00cc3d89482f965a5cd151d589237af
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: semgrep scan --config p/c --config p/security-audit --config p/secrets --error --metrics=off
+
+  lint:
+    name: Workflows, shell, Python, README
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
+      - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          advanced-security: false
+      - name: shellcheck
+        run: |
+          shellcheck t/ci/*.sh t/e2e/*.sh
+          shellcheck -s sh -e SC1091,SC2034,SC2154 config
+      - name: pyflakes
+        run: pipx run ruff==0.17.2 check --isolated --select F,E9 t/
+      - name: README compatibility table matches t/nginx-versions.json
+        run: |
+          t/ci/nginx_versions.py render
+          git diff --exit-code README.md
