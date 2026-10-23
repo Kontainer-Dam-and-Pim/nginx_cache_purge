@@ -41,7 +41,7 @@
           pkgs.clang-tools
           pkgs.cppcheck
           pkgs.jq
-          pkgs.pahole
+          pkgs.gdb
           pkgs.python3
           pkgs.ruff
           pkgs.shellcheck

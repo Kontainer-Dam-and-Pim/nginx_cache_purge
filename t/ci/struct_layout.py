@@ -12,8 +12,9 @@ from pathlib import Path
 
 OWN_PREFIX = "ngx_http_cache_purge_"
 TYPEDEF_END = re.compile(r"^\}\s*(ngx_\w+_t);", re.M)
-NOT_FOUND = re.compile(r"^pahole: type '\w+' not found\n?$")
-MEMBER = re.compile(r"^(\t+)(.*?);\s*/\*\s*([\d: ]+?)\s*\*/\s*$")
+NOT_FOUND = re.compile(r'^No symbol "\w+" in current context\.\n?$')
+COMMENTED = re.compile(r"^/\*\s*(.*?)\s*\*/\s*(.*)$")
+NESTED_END = re.compile(r"^\}\s*\w+;$")
 
 
 class LayoutError(Exception):
@@ -28,17 +29,14 @@ def mirrored_names(source):
     return sorted(names)
 
 
-def pahole(obj, name):
-    proc = subprocess.run(["pahole", "-C", name, str(obj)],
-                          capture_output=True, text=True)
+def ptype(obj, name):
+    proc = subprocess.run(["gdb", "-nx", "-batch", "-ex", f"ptype /o {name}",
+                           str(obj)], capture_output=True, text=True)
     if NOT_FOUND.match(proc.stderr):
         return None
-    if proc.returncode != 0 or proc.stderr:
-        raise LayoutError(f"pahole -C {name} {obj}: {proc.stderr.strip()}")
-    layouts = parse(proc.stdout)
-    if name not in layouts:
-        raise LayoutError(f"pahole -C {name} {obj}: no layout in its output")
-    return layouts[name]
+    if proc.returncode != 0 or proc.stderr or not proc.stdout.startswith("type = "):
+        raise LayoutError(f"gdb ptype /o {name} {obj}: {proc.stderr.strip()}")
+    return parse(proc.stdout)
 
 
 def layouts(obj, names):
@@ -46,26 +44,25 @@ def layouts(obj, names):
     found = {}
     for name in names:
         if name.encode() in data:
-            layout = pahole(obj, name)
+            layout = ptype(obj, name)
             if layout is not None:
                 found[name] = layout
     return found
 
 
 def parse(text):
-    layouts, members = {}, []
-    for line in text.splitlines():
-        end = re.match(r"^\}\s*(\w+);", line)
-        if end:
-            layouts[end.group(1)] = members
-            members = []
-            continue
-        m = MEMBER.match(line)
+    members = []
+    for line in text.splitlines()[1:]:
+        line = " ".join(line.split())
+        m = COMMENTED.match(line)
         if m:
-            depth, decl, pos = m.groups()
-            members.append((len(depth), " ".join(decl.split()),
-                            " ".join(pos.split())))
-    return layouts
+            pos, decl = m.groups()
+            if pos.startswith("total size") or pos.endswith("padding"):
+                continue
+            members.append((pos, decl))
+        elif NESTED_END.match(line):
+            members.append(("", line))
+    return members
 
 
 def module_object(objs):
@@ -85,8 +82,8 @@ def nginx_layouts(objs, names):
 
 
 def fmt(member):
-    depth, decl, pos = member
-    return f"{'  ' * depth}{decl}  /* {pos} */"
+    pos, decl = member
+    return f"/* {pos} */ {decl}" if pos else decl
 
 
 def compare(name, mine, theirs):

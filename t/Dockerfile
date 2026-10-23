@@ -1,3 +1,4 @@
+# check=skip=InvalidDefaultArgInFrom
 # t/Dockerfile — build context is always the repo root
 #
 #   docker build -f t/Dockerfile --build-arg NGINX_VERSION=x.y.z --build-arg UBUNTU_VERSION=24.04 .
@@ -21,7 +22,7 @@ RUN case "${UBUNTU_MIRROR}" in \
     done
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential clang cppcheck dwarves jq \
+        build-essential clang cppcheck gdb jq \
         libpcre2-dev libssl-dev zlib1g-dev \
         $(apt-cache show libpcre3-dev >/dev/null 2>&1 && echo libpcre3-dev) \
         $(apt-cache show libclang-rt-dev >/dev/null 2>&1 && echo libclang-rt-dev) \
