@@ -23,6 +23,7 @@ jobs:
       contents: read
     outputs:
       matrix: ${{ steps.read.outputs.matrix }}
+      ubuntu: ${{ steps.read.outputs.ubuntu }}
       latest: ${{ steps.read.outputs.latest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,12 +31,43 @@ jobs:
           persist-credentials: false
       - id: read
         run: |
-          echo "matrix=$(t/ci/nginx_versions.py matrix)" >> "$GITHUB_OUTPUT"
-          echo "latest=$(t/ci/nginx_versions.py latest)" >> "$GITHUB_OUTPUT"
+          matrix=$(t/ci/nginx_versions.py matrix)
+          {
+              echo "matrix=$matrix"
+              echo "ubuntu=$(jq -c '[.[].ubuntu, "24.04"] | unique' <<<"$matrix")"
+              echo "latest=$(t/ci/nginx_versions.py latest)"
+          } >> "$GITHUB_OUTPUT"
+
+  base:
+    name: Base image / Ubuntu ${{ matrix.ubuntu }}
+    needs: versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ${{ fromJSON(needs.versions.outputs.ubuntu) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: t/Dockerfile
+          target: base
+          build-args: UBUNTU_VERSION=${{ matrix.ubuntu }}
+          outputs: type=cacheonly
+          cache-from: type=gha,scope=base-${{ matrix.ubuntu }}
+          cache-to: type=gha,scope=base-${{ matrix.ubuntu }},mode=max
+          provenance: false
 
   test:
     name: nginx ${{ matrix.nginx }} / Ubuntu ${{ matrix.ubuntu }}
-    needs: versions
+    needs: [versions, base]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -58,6 +90,7 @@ jobs:
             UBUNTU_VERSION=${{ matrix.ubuntu }}
           tags: ngx-cache-purge-test
           load: true
+          cache-from: type=gha,scope=base-${{ matrix.ubuntu }}
           provenance: false
       - name: Struct layouts against this nginx
         run: docker run --rm -v "$PWD:/src" ngx-cache-purge-test t/ci/compat.sh
@@ -66,7 +99,7 @@ jobs:
 
   memory:
     name: ${{ matrix.check }} / nginx ${{ needs.versions.outputs.latest }}
-    needs: versions
+    needs: [versions, base]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -99,10 +132,27 @@ jobs:
             SANITIZE=${{ matrix.sanitize }}
           tags: ngx-cache-purge-test
           load: true
-          cache-from: type=gha,scope=memory-${{ matrix.cc }}-${{ needs.versions.outputs.latest }}
-          cache-to: type=gha,scope=memory-${{ matrix.cc }}-${{ needs.versions.outputs.latest }},mode=max
+          cache-from: type=gha,scope=base-24.04
           provenance: false
       - name: Test::Nginx suites, failing on any memory error report
         env:
           VALGRIND: ${{ matrix.valgrind }}
         run: docker run --rm -v "$PWD:/src" -e VALGRIND ngx-cache-purge-test
+
+  ci:
+    name: CI
+    needs: [versions, base, test, memory]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every job passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$RESULTS")
+          if [ -n "$failed" ]; then
+              echo "$failed"
+              exit 1
+          fi

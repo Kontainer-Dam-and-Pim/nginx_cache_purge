@@ -4,7 +4,7 @@
 #   docker build -f t/Dockerfile --build-arg NGINX_VERSION=x.y.z --build-arg UBUNTU_VERSION=24.04 .
 #   ... --build-arg CC=clang --build-arg SANITIZE=asan,ubsan     nginx and the module under sanitizers
 ARG UBUNTU_VERSION
-FROM ubuntu:${UBUNTU_VERSION}
+FROM ubuntu:${UBUNTU_VERSION} AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -35,6 +35,8 @@ RUN cpanm --notest \
     Test::Base \
     Test::LongString \
     List::MoreUtils
+
+FROM base
 
 ARG NGINX_VERSION
 RUN test -n "${NGINX_VERSION}" \
