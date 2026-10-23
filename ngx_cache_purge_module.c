@@ -8288,8 +8288,9 @@ ngx_http_fastcgi_cache_purge_handler(ngx_http_request_t *r)
     cache = flcf->upstream.cache->data;
 #  endif
 
-    if (ngx_http_cache_purge_init(r, cache, &flcf->cache_key) != NGX_OK) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    rc = ngx_http_cache_purge_init(r, cache, &flcf->cache_key);
+    if (rc != NGX_OK) {
+        return rc;
     }
 
     return ngx_http_cache_purge_dispatch(r, cache);
@@ -8593,10 +8594,9 @@ ngx_http_proxy_cache_purge_handler(ngx_http_request_t *r)
 #  endif
         }
 
-        if (ngx_http_cache_purge_init(r, cache,
-                                      &cplcf->proxy_separate_key) != NGX_OK)
-        {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        rc = ngx_http_cache_purge_init(r, cache, &cplcf->proxy_separate_key);
+        if (rc != NGX_OK) {
+            return rc;
         }
 
         /* no upstream here: this location's proxy_buffer_size, like the
@@ -8627,8 +8627,9 @@ ngx_http_proxy_cache_purge_handler(ngx_http_request_t *r)
         cache = plcf->upstream.cache->data;
 #  endif
 
-        if (ngx_http_cache_purge_init(r, cache, &plcf->cache_key) != NGX_OK) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        rc = ngx_http_cache_purge_init(r, cache, &plcf->cache_key);
+        if (rc != NGX_OK) {
+            return rc;
         }
     }
 
@@ -8804,8 +8805,9 @@ ngx_http_scgi_cache_purge_handler(ngx_http_request_t *r)
     cache = slcf->upstream.cache->data;
 #  endif
 
-    if (ngx_http_cache_purge_init(r, cache, &slcf->cache_key) != NGX_OK) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    rc = ngx_http_cache_purge_init(r, cache, &slcf->cache_key);
+    if (rc != NGX_OK) {
+        return rc;
     }
 
     return ngx_http_cache_purge_dispatch(r, cache);
@@ -9004,8 +9006,9 @@ ngx_http_uwsgi_cache_purge_handler(ngx_http_request_t *r)
     cache = ulcf->upstream.cache->data;
 #  endif
 
-    if (ngx_http_cache_purge_init(r, cache, &ulcf->cache_key) != NGX_OK) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    rc = ngx_http_cache_purge_init(r, cache, &ulcf->cache_key);
+    if (rc != NGX_OK) {
+        return rc;
     }
 
     return ngx_http_cache_purge_dispatch(r, cache);
@@ -9144,10 +9147,10 @@ ipv4:
         p       = inaddr6->s6_addr;
 
         if (access && IN6_IS_ADDR_V4MAPPED(inaddr6)) {
-            inaddr  = p[12] << 24;
-            inaddr += p[13] << 16;
-            inaddr += p[14] << 8;
-            inaddr += p[15];
+            inaddr  = (in_addr_t) p[12] << 24;
+            inaddr += (in_addr_t) p[13] << 16;
+            inaddr += (in_addr_t) p[14] << 8;
+            inaddr += (in_addr_t) p[15];
             inaddr  = htonl(inaddr);
             goto ipv4;
         }
@@ -9459,27 +9462,27 @@ ngx_http_cache_purge_init(ngx_http_request_t *r, ngx_http_file_cache_t *cache,
 
     rc = ngx_http_discard_request_body(r);
     if (rc != NGX_OK) {
-        return NGX_ERROR;
+        return rc;
     }
 
     c = ngx_pcalloc(r->pool, sizeof(ngx_http_cache_t));
     if (c == NULL) {
-        return NGX_ERROR;
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     rc = ngx_array_init(&c->keys, r->pool, 1, sizeof(ngx_str_t));
     if (rc != NGX_OK) {
-        return NGX_ERROR;
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     key = ngx_array_push(&c->keys);
     if (key == NULL) {
-        return NGX_ERROR;
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     rc = ngx_http_complex_value(r, cache_key, key);
     if (rc != NGX_OK) {
-        return NGX_ERROR;
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     /*
@@ -9809,6 +9812,13 @@ ngx_http_cache_purge_conf(ngx_conf_t *cf, ngx_http_cache_purge_conf_t *cpcf)
     }
 
     if (ngx_strcmp(value[from_position + 1].data, "all") == 0) {
+        if (from_position + 2 < cf->args->nelts) {
+            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                "\"from all\" takes no addresses, \"%V\" given",
+                &value[from_position + 2]);
+            return NGX_CONF_ERROR;
+        }
+
         cpcf->enable = 1;
         return NGX_CONF_OK;
     }

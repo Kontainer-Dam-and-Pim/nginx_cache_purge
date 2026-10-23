@@ -906,3 +906,22 @@ too long header
 ["X-Cache: MISS", "", "X-Cache: MISS"]
 --- error_code eval
 [200, 200, 200]
+
+=== TEST 39: a purge whose request body is malformed is answered 400, not 500
+--- http_config eval: $::HttpConfig
+--- config
+    location /cache {
+        proxy_pass        http://backend/origin;
+        proxy_cache       cache_zone;
+        proxy_cache_key   "$uri";
+        proxy_cache_purge PURGE from 127.0.0.1;
+    }
+--- raw_request eval
+"PURGE /cache/body HTTP/1.1\r
+Host: localhost\r
+Transfer-Encoding: chunked\r
+Connection: close\r
+\r
+zz\r
+"
+--- error_code: 400
