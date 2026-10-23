@@ -876,3 +876,33 @@ PURGE /sep/t36
 --- error_code: 200
 --- no_error_log
 too long header
+
+=== TEST 38: vary-aware purge removes the variants when the purge's own variant was never cached
+--- http_config eval
+"    proxy_cache_path " . $::tmp . "/vary_miss keys_zone=vm_zone:1m;
+    cache_purge_vary_aware on;
+    upstream backend {
+        server 127.0.0.1:" . Test::Nginx::Util::server_port() . ";
+    }
+"
+--- config
+    location /cache {
+        proxy_pass        http://backend/origin;
+        proxy_cache       vm_zone;
+        proxy_cache_key   "$uri";
+        proxy_cache_valid 200 1h;
+        proxy_cache_purge PURGE from 127.0.0.1;
+        add_header X-Cache $upstream_cache_status;
+    }
+    location /origin {
+        add_header Vary Accept-Encoding;
+        return 200 "ok";
+    }
+--- request eval
+["GET /cache/vm", "PURGE /cache/vm", "GET /cache/vm"]
+--- more_headers eval
+["Accept-Encoding: gzip", "", "Accept-Encoding: gzip"]
+--- response_headers_like eval
+["X-Cache: MISS", "", "X-Cache: MISS"]
+--- error_code eval
+[200, 200, 200]
