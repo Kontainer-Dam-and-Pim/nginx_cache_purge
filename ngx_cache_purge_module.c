@@ -361,6 +361,7 @@ typedef struct {
     u_char                 *key_buffer;     /* key_len + 1 */
     ngx_uint_t              files_deleted;
     ngx_uint_t              files_checked;
+    ngx_uint_t              delete_errors;
     /*
      * cache is set by ngx_http_cache_purge_delete_variants() so that
      * delete_exact_file can update shm metadata (sh->size, node->exists,
@@ -403,6 +404,7 @@ typedef struct {
     ngx_uint_t              files_checked;
     ngx_uint_t              files_deleted;
     ngx_uint_t              errors;         /* subdirectories not read */
+    ngx_uint_t              delete_errors;
     u_char                  buf[NGX_CACHE_PURGE_KEY_MAX_LEN];
 } ngx_http_cache_purge_scan_t;
 
@@ -820,8 +822,8 @@ static ngx_int_t ngx_http_purge_file_cache_delete_exact_file(
 static void ngx_http_cache_purge_invalidate_node(ngx_http_file_cache_t *cache,
     ngx_str_t *path);
 
-static void ngx_http_cache_purge_delete_variants(ngx_http_request_t *r,
-    ngx_http_file_cache_t *cache);
+static ngx_int_t ngx_http_cache_purge_delete_variants(ngx_http_request_t *r,
+    ngx_http_file_cache_t *cache, ngx_uint_t *deleted);
 
 ngx_int_t  ngx_http_cache_purge_access_handler(ngx_http_request_t *r);
 ngx_int_t  ngx_http_cache_purge_access(ngx_array_t *a, ngx_array_t *a6,
@@ -842,7 +844,7 @@ ngx_int_t  ngx_http_file_cache_purge(ngx_http_request_t *r);
 ngx_int_t  ngx_http_cache_purge_all(ngx_http_request_t *r,
                ngx_http_file_cache_t *cache);
 ngx_uint_t ngx_http_cache_purge_partial(ngx_http_request_t *r,
-               ngx_http_file_cache_t *cache);
+               ngx_http_file_cache_t *cache, ngx_uint_t *errors);
 ngx_int_t  ngx_http_cache_purge_is_partial(ngx_http_request_t *r);
 char      *ngx_http_cache_purge_conf(ngx_conf_t *cf,
                ngx_http_cache_purge_conf_t *cpcf);
@@ -3192,6 +3194,7 @@ ngx_http_purge_file_cache_delete_exact_file(ngx_tree_ctx_t *ctx,
         if (ngx_errno != NGX_ENOENT) {
             ngx_log_error(NGX_LOG_CRIT, ctx->log, ngx_errno,
                           "ngx_cache_purge: could not delete \"%V\"", path);
+            wctx->delete_errors++;
         }
     } else {
         wctx->files_deleted++;
@@ -3202,21 +3205,23 @@ ngx_http_purge_file_cache_delete_exact_file(ngx_tree_ctx_t *ctx,
 
 /*
  * Walk the cache directory and delete all files whose KEY: string matches
- * the purged key exactly.  Called after a successful ngx_http_file_cache_purge()
- * when cache_purge_vary_aware is on.
+ * the purged key exactly.  Called after every exact purge when
+ * cache_purge_vary_aware is on, whether or not ngx_http_file_cache_purge()
+ * found the file of the request's own variant.
  */
-static void
+static ngx_int_t
 ngx_http_cache_purge_delete_variants(ngx_http_request_t *r,
-    ngx_http_file_cache_t *cache)
+    ngx_http_file_cache_t *cache, ngx_uint_t *deleted)
 {
     ngx_http_cache_purge_walk_ctx_t  ctx;
     ngx_tree_ctx_t                   tree;
     ngx_str_t                       *key;
 
+    *deleted = 0;
     key = r->cache->keys.elts;
 
     if (key[0].len == 0) {
-        return;
+        return NGX_OK;
     }
 
     ngx_memzero(&ctx,  sizeof(ngx_http_cache_purge_walk_ctx_t));
@@ -3229,7 +3234,7 @@ ngx_http_cache_purge_delete_variants(ngx_http_request_t *r,
     /* the key and its '\n', whatever its length */
     ctx.key_buffer = ngx_pnalloc(r->pool, key[0].len + 1);
     if (ctx.key_buffer == NULL) {
-        return;
+        return NGX_ERROR;
     }
 
     tree.file_handler      = ngx_http_purge_file_cache_delete_exact_file;
@@ -3239,13 +3244,23 @@ ngx_http_cache_purge_delete_variants(ngx_http_request_t *r,
     tree.data              = &ctx;
     tree.log               = ngx_cycle->log;
 
-    ngx_walk_tree(&tree, &cache->path->name);
-
-    if (ctx.files_deleted > 0) {
-        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "ngx_cache_purge: vary-aware walk deleted %ui variant(s) "
-                       "for key \"%V\"", ctx.files_deleted, &key[0]);
+    if (ngx_walk_tree(&tree, &cache->path->name) != NGX_OK
+        || ctx.delete_errors != 0)
+    {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "ngx_cache_purge: vary-aware walk of \"%V\" for key "
+                      "\"%V\" incomplete, %ui file(s) could not be deleted",
+                      &cache->path->name, &key[0], ctx.delete_errors);
+        return NGX_ERROR;
     }
+
+    *deleted = ctx.files_deleted;
+
+    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "ngx_cache_purge: vary-aware walk deleted %ui variant(s) "
+                   "for key \"%V\"", ctx.files_deleted, &key[0]);
+
+    return NGX_OK;
 }
 
 static ngx_int_t
@@ -3756,6 +3771,7 @@ ngx_http_cache_purge_scan(ngx_http_cache_purge_scan_t *s, ngx_msec_t budget)
                     ngx_log_error(NGX_LOG_CRIT, s->log, ngx_errno,
                                   "ngx_cache_purge: could not delete "
                                   "\"%V\"", &name);
+                    s->delete_errors++;
                 }
             } else {
                 s->files_deleted++;
@@ -3778,7 +3794,8 @@ ngx_http_cache_purge_scan(ngx_http_cache_purge_scan_t *s, ngx_msec_t budget)
 
 /* A whole walk, synchronously, for one wildcard (or purge_all when pattern
  * is empty).  Returns the number of files deleted; *errors, if given, is
- * set when some of the cache (or all of it) could not be read. */
+ * set when some of the cache (or all of it) could not be read, or a
+ * matching file could not be deleted. */
 static ngx_uint_t
 ngx_http_cache_purge_scan_sync(ngx_http_request_t *r,
     ngx_http_file_cache_t *cache, ngx_str_t *pattern, ngx_uint_t *errors)
@@ -3825,7 +3842,7 @@ ngx_http_cache_purge_scan_sync(ngx_http_request_t *r,
     ngx_http_cache_purge_scan_close(&s);
 
     if (errors != NULL) {
-        *errors = s.errors;
+        *errors = s.errors + s.delete_errors;
     }
 
     ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -8245,11 +8262,11 @@ ngx_http_fastcgi_cache_purge_conf(ngx_conf_t *cf, ngx_command_t *cmd,
 ngx_int_t
 ngx_http_fastcgi_cache_purge_handler(ngx_http_request_t *r)
 {
+    ngx_int_t                         rc;
     ngx_http_file_cache_t            *cache;
     ngx_http_fastcgi_loc_conf_t      *flcf;
 #  if (nginx_version >= 1007009)
     ngx_http_fastcgi_main_conf_t     *fmcf;
-    ngx_int_t                         rc;
 #  endif
 
     if (ngx_http_upstream_create(r) != NGX_OK) {
@@ -8517,12 +8534,12 @@ ngx_http_proxy_cache_purge_conf(ngx_conf_t *cf, ngx_command_t *cmd,
 ngx_int_t
 ngx_http_proxy_cache_purge_handler(ngx_http_request_t *r)
 {
+    ngx_int_t                         rc;
     ngx_http_file_cache_t            *cache;
     ngx_http_proxy_loc_conf_t        *plcf;
     ngx_http_cache_purge_loc_conf_t  *cplcf;
 #  if (nginx_version >= 1007009)
     ngx_http_proxy_main_conf_t       *pmcf;
-    ngx_int_t                         rc;
     ngx_uint_t                        i;        /* C89: declared at top of scope */
     ngx_str_t                        *name;     /* C89: declared at top of scope */
     ngx_http_file_cache_t           **caches;   /* C89: declared at top of scope */
@@ -8761,11 +8778,11 @@ ngx_http_scgi_cache_purge_conf(ngx_conf_t *cf, ngx_command_t *cmd,
 ngx_int_t
 ngx_http_scgi_cache_purge_handler(ngx_http_request_t *r)
 {
+    ngx_int_t                         rc;
     ngx_http_file_cache_t            *cache;
     ngx_http_scgi_loc_conf_t         *slcf;
 #  if (nginx_version >= 1007009)
     ngx_http_scgi_main_conf_t        *smcf;
-    ngx_int_t                         rc;
 #  endif
 
     if (ngx_http_upstream_create(r) != NGX_OK) {
@@ -8961,11 +8978,11 @@ ngx_http_uwsgi_cache_purge_conf(ngx_conf_t *cf, ngx_command_t *cmd,
 ngx_int_t
 ngx_http_uwsgi_cache_purge_handler(ngx_http_request_t *r)
 {
+    ngx_int_t                         rc;
     ngx_http_file_cache_t            *cache;
     ngx_http_uwsgi_loc_conf_t        *ulcf;
 #  if (nginx_version >= 1007009)
     ngx_http_uwsgi_main_conf_t       *umcf;
-    ngx_int_t                         rc;
 #  endif
 
     if (ngx_http_upstream_create(r) != NGX_OK) {
@@ -9502,7 +9519,7 @@ ngx_http_cache_purge_dispatch(ngx_http_request_t *r,
     ngx_http_cache_purge_loc_conf_t   *cplcf;
     ngx_str_t                          status;
     ngx_str_t                         *key;
-    ngx_uint_t                         deleted;
+    ngx_uint_t                         deleted, errors;
     ngx_int_t                          rc;
 
     ngx_str_set(&status, "purged");
@@ -9532,9 +9549,11 @@ ngx_http_cache_purge_dispatch(ngx_http_request_t *r,
     }
 
     if (ngx_http_cache_purge_is_partial(r)) {
-        deleted = ngx_http_cache_purge_partial(r, cache);
+        deleted = ngx_http_cache_purge_partial(r, cache, &errors);
         r->main->count++;
-        if (deleted > 0) {
+        if (errors != 0) {
+            ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+        } else if (deleted > 0) {
             ngx_http_finalize_request(r,
                 ngx_http_cache_purge_send_response(r, &status));
         } else {
@@ -9561,6 +9580,7 @@ ngx_http_cache_purge_handler(ngx_http_request_t *r)
     ngx_str_t                         status;
     ngx_int_t                         rc;
     ngx_int_t                         not_found_code;
+    ngx_uint_t                        variants;
 
 # if (NGX_HAVE_FILE_AIO || NGX_THREADS)
     if (r->aio) {
@@ -9578,29 +9598,36 @@ ngx_http_cache_purge_handler(ngx_http_request_t *r)
 
     switch (rc) {
     case NGX_OK:
-        ngx_str_set(&status, "purged");
+    case NGX_DECLINED:
         r->write_event_handler = ngx_http_request_empty_handler;
 
         /*
-         * Vary-aware cleanup: after deleting the primary file, walk the
-         * cache directory to remove any remaining variant files (e.g. those
-         * created by gzip_vary / Vary: Accept-Encoding).  All variant files
-         * share the same KEY: string, which is matched exactly by the walk.
-         * r->cache->file_cache is set by ngx_http_cache_purge_init().
+         * Vary-aware cleanup: the request's own headers pick one variant,
+         * whose file may be gone (or never cached) while the others are
+         * not.  All variant files share the same KEY: string, which the
+         * walk matches exactly.
          */
-        if (cmcf != NULL && cmcf->vary_aware) {
-            ngx_http_cache_purge_delete_variants(r, r->cache->file_cache);
+        variants = 0;
+
+        if (cmcf != NULL && cmcf->vary_aware
+            && ngx_http_cache_purge_delete_variants(r, r->cache->file_cache,
+                                                    &variants) != NGX_OK)
+        {
+            ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+            return;
         }
 
+        if (rc == NGX_DECLINED && variants == 0) {
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "ngx_cache_purge: key \"%V\" not found in cache",
+                           (ngx_str_t *) r->cache->keys.elts);
+            ngx_http_finalize_request(r, not_found_code);
+            return;
+        }
+
+        ngx_str_set(&status, "purged");
         ngx_http_finalize_request(r,
             ngx_http_cache_purge_send_response(r, &status));
-        return;
-
-    case NGX_DECLINED:
-        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "ngx_cache_purge: key \"%V\" not found in cache",
-                       (ngx_str_t *) r->cache->keys.elts);
-        ngx_http_finalize_request(r, not_found_code);
         return;
 
 # if (NGX_HAVE_FILE_AIO || NGX_THREADS)
@@ -9671,12 +9698,17 @@ ngx_http_file_cache_purge(ngx_http_request_t *r)
     ngx_shmtx_unlock(&cache->shpool->mutex);
 
     if (ngx_delete_file(c->file.name.data) == NGX_FILE_ERROR) {
+        if (ngx_errno == NGX_ENOENT) {
+            return NGX_DECLINED;
+        }
+
         ngx_log_error(NGX_LOG_CRIT, r->connection->log, ngx_errno,
                       "ngx_cache_purge: could not delete \"%V\"", &c->file.name);
-    } else {
-        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "ngx_cache_purge: deleted \"%V\"", &c->file.name);
+        return NGX_ERROR;
     }
+
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "ngx_cache_purge: deleted \"%V\"", &c->file.name);
 
     return NGX_OK;
 }
@@ -9698,7 +9730,7 @@ ngx_http_cache_purge_all(ngx_http_request_t *r, ngx_http_file_cache_t *cache)
 
 ngx_uint_t
 ngx_http_cache_purge_partial(ngx_http_request_t *r,
-    ngx_http_file_cache_t *cache)
+    ngx_http_file_cache_t *cache, ngx_uint_t *errors)
 {
     ngx_str_t  *key, pattern;
 
@@ -9710,7 +9742,7 @@ ngx_http_cache_purge_partial(ngx_http_request_t *r,
         pattern.len--;
     }
 
-    return ngx_http_cache_purge_scan_sync(r, cache, &pattern, NULL);
+    return ngx_http_cache_purge_scan_sync(r, cache, &pattern, errors);
 }
 
 ngx_int_t
