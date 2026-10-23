@@ -3799,7 +3799,9 @@ ngx_http_cache_purge_scan_sync(ngx_http_request_t *r,
     if (pat.data == NULL) {
         return 0;
     }
-    ngx_memcpy(pat.data, pattern->data, pattern->len);
+    if (pattern->len != 0) {
+        ngx_memcpy(pat.data, pattern->data, pattern->len);
+    }
 
     if (ngx_http_cache_purge_patterns_init(&s.pats, &pat, 1, s.log) != NGX_OK)
     {
