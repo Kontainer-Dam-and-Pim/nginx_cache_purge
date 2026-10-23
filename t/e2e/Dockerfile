@@ -1,7 +1,7 @@
 # t/e2e/Dockerfile -- end-to-end test image.  Build context: the repo root.
 #
-#   docker build -f t/e2e/Dockerfile -t ngx-cache-purge-e2e .
-#   docker build -f t/e2e/Dockerfile --build-arg SANITIZE=asan -t ngx-cache-purge-e2e:asan .
+#   docker build -f t/e2e/Dockerfile --build-arg NGINX_VERSION=x.y.z -t ngx-cache-purge-e2e .
+#   docker build -f t/e2e/Dockerfile --build-arg NGINX_VERSION=x.y.z --build-arg SANITIZE=asan -t ngx-cache-purge-e2e:asan .
 #
 ARG UBUNTU_VERSION=24.04
 FROM ubuntu:${UBUNTU_VERSION}
@@ -13,53 +13,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         wget ca-certificates python3 wrk gdb procps psmisc curl util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-ARG NGINX_VERSION=1.30.6
-RUN wget -q https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz \
+ARG NGINX_VERSION
+RUN test -n "${NGINX_VERSION}" \
+    && wget -q https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz \
     && tar xzf nginx-${NGINX_VERSION}.tar.gz \
     && mv nginx-${NGINX_VERSION} /nginx-src \
     && rm nginx-${NGINX_VERSION}.tar.gz
 
 # only the module: harness edits do not rebuild nginx
+COPY t/ci/build-nginx.sh /usr/local/bin/
 COPY config ngx_cache_purge_module.c /module/
 
 # SANITIZE=asan: nginx and the module with AddressSanitizer
 ARG SANITIZE=
-RUN cd /nginx-src \
-    && CC_OPT="-g -O2 -fno-omit-frame-pointer" \
-    && LD_OPT="" \
-    && if [ "$SANITIZE" = "asan" ]; then \
-           CC_OPT="-g -O1 -fno-omit-frame-pointer -fsanitize=address"; \
-           LD_OPT="-fsanitize=address"; \
-       fi \
-    && ./configure \
+RUN build-nginx.sh /nginx-src "$SANITIZE" \
         --prefix=/usr/local/nginx \
         --with-threads \
         --with-file-aio \
         --with-http_stub_status_module \
         --add-module=/module \
-        --with-cc-opt="$CC_OPT" \
-        --with-ld-opt="$LD_OPT" \
-    && make -j"$(nproc)" \
-    && make install \
     && echo "$SANITIZE" > /usr/local/nginx/SANITIZE
 
 # The same nginx without file AIO (threads only): aio threads reads of the
 # cache header take a code path of their own there (torture s_aio_threads)
-RUN cp -a /nginx-src /nginx-noaio && cd /nginx-noaio \
-    && CC_OPT="-g -O2 -fno-omit-frame-pointer" \
-    && LD_OPT="" \
-    && if [ "$(cat /usr/local/nginx/SANITIZE)" = "asan" ]; then \
-           CC_OPT="-g -O1 -fno-omit-frame-pointer -fsanitize=address"; \
-           LD_OPT="-fsanitize=address"; \
-       fi \
-    && ./configure \
+RUN cp -a /nginx-src /nginx-noaio \
+    && build-nginx.sh /nginx-noaio "$SANITIZE" \
         --prefix=/usr/local/nginx-noaio \
         --with-threads \
         --add-module=/module \
-        --with-cc-opt="$CC_OPT" \
-        --with-ld-opt="$LD_OPT" \
-    && make -j"$(nproc)" \
-    && make install \
     && rm -rf /nginx-noaio
 
 # cachegen: compiled against this nginx's headers, so the cache file header

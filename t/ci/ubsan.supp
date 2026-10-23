@@ -1,0 +1,3 @@
+function:src/core/ngx_output_chain.c
+nonnull-attribute:src/http/ngx_http_file_cache.c
+pointer-overflow:src/http/ngx_http_script.c
