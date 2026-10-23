@@ -9,6 +9,7 @@ fi
 src=$1
 sanitize=$2
 shift 2
+here=$(cd "$(dirname "$0")" && pwd)
 
 cc_opt="-g -O2 -fno-omit-frame-pointer"
 ld_opt=""
@@ -25,6 +26,10 @@ if [ -n "$sanitize" ]; then
     flags=${flags#,}
     cc_opt="-g -O1 -fno-omit-frame-pointer -fsanitize=$flags"
     ld_opt="-fsanitize=$flags"
+    if [[ ,$flags, == *,address,* ]]; then
+        ld_opt+=" -Wl,--wrap=ngx_init_cycle"
+        set -- "$@" --add-module="$here/lsan"
+    fi
 fi
 
 cd "$src"

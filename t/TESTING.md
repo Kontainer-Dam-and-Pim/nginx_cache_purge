@@ -18,6 +18,7 @@ t/
 │   ├── analyze.sh          #   strict warnings, cppcheck, clang/gcc analyzers (SARIF)
 │   ├── ubsan.supp          #   UBSan findings inside nginx itself, not the module
 │   ├── lsan.supp           #   the one allocation nginx core leaves to process exit
+│   ├── lsan/               #   keeps nginx's bootstrap pool reachable when startup fails
 │   └── nginx_versions.py   #   matrix, README table, new nginx releases
 ├── e2e/                    # End-to-end suite (see e2e/README.md)
 ├── basic.t                 # Core purge functionality
