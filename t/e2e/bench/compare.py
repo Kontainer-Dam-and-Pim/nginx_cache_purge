@@ -5,6 +5,7 @@ DIR, the builds side by side, and the change from the first to the second.
     compare.py DIR [--a base] [--b head]
 """
 import glob, json, os, statistics, sys
+from pathlib import Path
 
 # higher is better for these; lower for the rest (times, latencies)
 HIGHER = ("rps",)
@@ -25,7 +26,7 @@ def load(d, mode, build):
     runs = {}
     for f in sorted(glob.glob(os.path.join(d, "%s-%s-*.json" % (mode, build)))):
         try:
-            res = json.load(open(f))
+            res = json.loads(Path(f).read_text())
         except ValueError:
             continue
         for measure, reps in res["runs"].items():

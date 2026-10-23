@@ -1,6 +1,7 @@
 """Phases of the e2e suite: seeding, nginx configs, load, the correctness
 verifier, consistency checks, starvation probes and chaos actions."""
 
+import contextlib
 import glob
 import json
 import os
@@ -338,10 +339,8 @@ class Tracked:
             for k in keys:
                 self.write(k, 1, size)
                 zone = "videos" if k.startswith("/video/") else "images"
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(md5_path(zone, k))
-                except OSError:
-                    pass
 
 
 def body_version(body):
@@ -943,10 +942,8 @@ def gdb_kill_in_index_change(ngx, symbol, timeout=90):
     except subprocess.TimeoutExpired as e:
         out = (e.stdout or b"").decode(errors="replace") if isinstance(
             e.stdout, bytes) else (e.stdout or "")
-        try:
+        with contextlib.suppress(OSError):
             os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
         return {"result": "timeout", "pid": pid, "out": out[-1500:]}
     if "Function \"%s\" not defined" % symbol in out or \
             "No symbol table" in out:
@@ -1012,11 +1009,9 @@ def durability_kill_drainer(cache, tracked, res, name, bound=240.0):
     for at in (1.0, 5.0):
         time.sleep(at - (1.0 if at > 1.0 else 0.0))
         for pid in cache.workers():
-            try:
+            with contextlib.suppress(OSError):
                 os.kill(pid, signal.SIGKILL)
                 killed.append(pid)
-            except OSError:
-                pass
     fresh = wait_version(key, v, bound)
     c.close()
     ok = fresh is not None
@@ -1032,11 +1027,9 @@ def external_delete(ks, r, files=200):
     removed = 0
     for _ in range(files):
         i = ks.random_seeded(r)
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(md5_path(ks.zone(i), ks.key(i)))
             removed += 1
-        except OSError:
-            pass
     d = os.path.join(DATA, "cache", "images", "%x" % r.randrange(16),
                      "%02x" % r.randrange(256))
     n = len(os.listdir(d)) if os.path.isdir(d) else 0

@@ -14,6 +14,7 @@ import signal
 import sys
 import threading
 import time
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -554,7 +555,7 @@ def main():
         "http_extra=%s main_extra=%s sanitize=%s"
         % (cfg.profile, cfg.files, cfg.gb, cfg.sparse, cfg.workers,
            cfg.duration, cfg.http_extra, cfg.main_extra,
-           open("/usr/local/nginx/SANITIZE").read().strip()
+           Path("/usr/local/nginx/SANITIZE").read_text().strip()
            if os.path.exists("/usr/local/nginx/SANITIZE") else "?"))
     try:
         if cfg.profile == "chaos":

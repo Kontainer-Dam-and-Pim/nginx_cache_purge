@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fault-injection torture scenarios for ngx_cache_purge (dev container)."""
-import http.client, os, random, re, shutil, signal, subprocess, sys, threading, time
+import contextlib, http.client, os, random, re, shutil, signal, subprocess, sys, threading, time
+from pathlib import Path
 
 N = os.environ.get("TOR_NGINX", "/usr/local/nginx/sbin/nginx")
 N_DEFAULT = N
@@ -47,7 +48,7 @@ def start(c):
     subprocess.run(["pkill", "-9", "nginx"], capture_output=True)
     time.sleep(0.3)
     shutil.rmtree(R, ignore_errors=True); os.makedirs(R)
-    open(R + "/nginx.conf", "w").write(c)
+    Path(R + "/nginx.conf").write_text(c)
     rc, err = run_nginx()
     if rc: raise SystemExit("start failed: " + err)
     time.sleep(0.5)
@@ -64,8 +65,8 @@ def run_nginx(*args):
 def restart_keep(c=None):
     """stop and start nginx on the same cache dirs"""
     run_nginx("-s", "stop"); time.sleep(1)
-    if c: open(R + "/nginx.conf", "w").write(c)
-    open(R + "/error.log", "a").write("---- restart\n")
+    if c: Path(R + "/nginx.conf").write_text(c)
+    with open(R + "/error.log", "a") as f: f.write("---- restart\n")
     rc, err = run_nginx()
     if rc: raise SystemExit("restart failed: " + err)
     time.sleep(0.5)
@@ -121,7 +122,7 @@ def purge_and_check(zone, pre, name):
     return ok
 
 def logscan(name, allow=()):
-    txt = open(R + "/error.log").read()
+    txt = Path(R + "/error.log").read_text()
     bad = [l for l in txt.splitlines() if re.search(r"\[(alert|crit|emerg)\]|signal (11|6|7|8)|AddressSanitizer", l)
            and not any(re.search(a, l) for a in allow)]
     for l in bad[:10]: log("   LOG:", l[:220])
@@ -132,7 +133,7 @@ def line_of(*texts):
     """the line of the module source holding the first of texts found once:
     breakpoints follow the code, not a line number (an older source has the
     older text)"""
-    lines = open(SRC).read().split("\n")
+    lines = Path(SRC).read_text().split("\n")
     for t in texts:
         t, off = t if isinstance(t, tuple) else (t, 0)     # (text, lines after)
         hits = [i + 1 for i, l in enumerate(lines) if t in l]
@@ -148,10 +149,9 @@ def shim(**faults):
     for k, v in faults.items():
         f = "%s/fault.%s" % (R, k)
         if v is None:
-            try: os.unlink(f)
-            except OSError: pass
+            with contextlib.suppress(OSError): os.unlink(f)
         else:
-            open(f, "w").write(str(v))
+            Path(f).write_text(str(v))
 
 def preload(on):
     if on:
@@ -177,7 +177,7 @@ T_START = [0.0]
 
 def crashed(since=0):
     """a crash signal in the log, or an ASan report written since start()"""
-    txt = open(R + "/error.log").read()[since:]
+    txt = Path(R + "/error.log").read_text()[since:]
     asan = [f for f in os.listdir("/tmp") if f.startswith("asan")
             and os.path.getmtime("/tmp/" + f) >= T_START[0]]
     return bool(re.search(r"signal (11|6|7|8)|AddressSanitizer", txt)) or bool(asan)
@@ -186,7 +186,7 @@ def wait_log(pat, t=60, since=0):
     # since: an offset into the log
     end = time.time() + t
     while time.time() < end:
-        if re.search(pat, open(R + "/error.log").read()[since:]): return True
+        if re.search(pat, Path(R + "/error.log").read_text()[since:]): return True
         time.sleep(0.2)
     return False
 
@@ -245,8 +245,7 @@ def s_external_rm(threads):
     for d in os.listdir(R + "/za")[:6]:
         shutil.rmtree(os.path.join(R, "za", d), ignore_errors=True)
     for f in [os.path.join(r, x) for r, _, fs in os.walk(R + "/za") for x in fs][:200]:
-        try: os.unlink(f)
-        except OSError: pass
+        with contextlib.suppress(OSError): os.unlink(f)
     fill("za", "x/a", 2000)                    # recreates dirs and files
     purge_and_check("za", "x/a2", name)
     purge_and_check("za", "x/", name)
@@ -280,7 +279,7 @@ def s_emfile(threads):
     # rebuild on restart with a tiny descriptor limit
     restart_keep(conf("cache_purge_index 32m;", zones=Z, workers=2, threads=threads, rlimit=int(os.environ.get("RL","90")), conns=20).replace("tasks=4", "tasks=16"))
     time.sleep(3)
-    txt = open(R + "/error.log").read().split("---- restart")[-1]
+    txt = Path(R + "/error.log").read_text().split("---- restart")[-1]
     complete = "build of \"za\" complete" in txt
     failed = bool(re.search(r"build of \"za\" failed|could not be read", txt))
     log("  build complete=%s failed=%s" % (complete, failed))
@@ -400,8 +399,7 @@ def s_kill_after_202(threads):
         for _ in range(3):
             time.sleep(random.uniform(0.02, 0.3))
             for p in workers():
-                try: os.kill(int(p), signal.SIGKILL)
-                except ProcessLookupError: pass
+                with contextlib.suppress(ProcessLookupError): os.kill(int(p), signal.SIGKILL)
     for round_ in range(6):
         if not wait_gone("za", "k/a%d" % round_, 90):
             FAIL.append("%s: purge k/a%d* lost after kill -9 (%d files left)" % (name, round_, disk("za", "k/a%d" % round_)))
@@ -473,7 +471,7 @@ def s_reload_while_locked(threads):
         if not os.path.exists(R + "/stopped"):
             FAIL.append("%s/%s: breakpoint never hit" % (name, trigger)); g.kill(); stop(); continue
         # the victim is frozen holding the lock: reload first, then kill it
-        mark = len(open(R + "/error.log").read())
+        mark = len(Path(R + "/error.log").read_text())
         run_nginx("-s", "reload")
         time.sleep(0.5)
         os.kill(int(victim), signal.SIGKILL)
@@ -488,8 +486,7 @@ def s_reload_while_locked(threads):
         purge_and_check("za", "w/", name + "/" + trigger)
         logscan(name, allow=[r"exited on signal 9", r"was locked by", r"died while updating"])
         stop()
-        try: os.unlink(R + "/stopped")
-        except OSError: pass
+        with contextlib.suppress(OSError): os.unlink(R + "/stopped")
 
 
 # ------------------------------------------------ regression scenarios (#2)
@@ -504,8 +501,7 @@ def gdb_release(g, t=15):
     """end a gdb that may still wait in "continue": SIGINT returns it to
     its script (which detaches), so no breakpoint is left in the worker"""
     if g.poll() is None:
-        try: os.kill(g.pid, signal.SIGINT)
-        except ProcessLookupError: pass
+        with contextlib.suppress(ProcessLookupError): os.kill(g.pid, signal.SIGINT)
     try: g.wait(t)
     except subprocess.TimeoutExpired: g.kill()
 
@@ -524,8 +520,7 @@ def s_index_reset_window(threads):
     wait_log('build of "za" complete')
     fill("za", "i/a", 200)
     for f in ("reader", "resetter", "done"):
-        try: os.unlink("%s/%s" % (R, f))
-        except OSError: pass
+        with contextlib.suppress(OSError): os.unlink("%s/%s" % (R, f))
     w1, w2, w3 = workers()[:3]
     reset_at = line_of("sh = ngx_http_cache_purge_index_create(shpool, generation);")
     read_at = line_of(("if (sh == NULL || sh->state == NGX_CACHE_PURGE_INDEX_FAILED)", -2),
@@ -589,8 +584,7 @@ def s_queue_reset_cut(threads):
     w = workers()[0]
     g = gdb_bg(w, "rbreak ^ngx_http_cache_purge_queue_lane", "continue", "shell kill -9 %s" % w)
     time.sleep(1.5)
-    try: req("PURGE", "/za/c/a1*")
-    except Exception: pass
+    with contextlib.suppress(OSError, http.client.HTTPException): req("PURGE", "/za/c/a1*")
     try: g.wait(30)
     except subprocess.TimeoutExpired: g.kill()
     time.sleep(1)
@@ -599,8 +593,7 @@ def s_queue_reset_cut(threads):
     g = gdb_bg(w, "break " + line_of("queue = ngx_http_cache_purge_queue_create(cmcf, shpool, generation);"),
                "continue", "shell kill -9 %s" % w)
     time.sleep(1.5)
-    try: req("PURGE", "/za/c/a2*")
-    except Exception: pass
+    with contextlib.suppress(OSError, http.client.HTTPException): req("PURGE", "/za/c/a2*")
     try: g.wait(30)
     except subprocess.TimeoutExpired: g.kill()
     time.sleep(1)
@@ -644,8 +637,7 @@ def s_reclaim(threads):
         ws = workers()
         if not ws: time.sleep(0.2); continue
         w = ws[0]
-        try: os.unlink(R + "/hit")
-        except OSError: pass
+        with contextlib.suppress(OSError): os.unlink(R + "/hit")
         g = gdb_bg(w, "break %s if %s" % (at, cond), "continue",
                    "shell touch %s/hit" % R, "shell kill -9 %s" % w)
         time.sleep(1.5)                  # attached, breakpoint set
@@ -692,12 +684,12 @@ def s_resize_reload(threads):
         start(queued_conf(threads, 64, "3s"))
         for i in range(10): fill("za", "r%d/a" % i, 20, 4)
         codes = [req("PURGE", "/za/r%d/*" % i)[0] for i in range(10)]
-        mark = len(open(R + "/error.log").read())
-        open(R + "/nginx.conf", "w").write(queued_conf(threads, new_size, "10ms"))
+        mark = len(Path(R + "/error.log").read_text())
+        Path(R + "/nginx.conf").write_text(queued_conf(threads, new_size, "10ms"))
         run_nginx("-s", "reload")
         wait_log(r"start worker process", 10, since=mark)
         time.sleep(1)
-        txt = open(R + "/error.log").read()[mark:]
+        txt = Path(R + "/error.log").read_text()[mark:]
         m = re.search(r"purge queue resized: (\d+) queued purge\(s\) moved to the new queue, (\d+) lost", txt)
         left = [i for i in range(10) if not wait_gone("za", "r%d/" % i, 20)]
         log("  %s (64 -> %d): queued %s, log %s, not carried out %s"
@@ -745,7 +737,7 @@ def cache_files(zone):
             if os.path.isfile(os.path.join(r, f)) and not os.path.islink(os.path.join(r, f))]
 
 def key_of(path):
-    d = open(path, "rb").read(4096)
+    with open(path, "rb") as f: d = f.read(4096)
     i = d.find(b"\nKEY: ")
     return d[i + 6:d.index(b"\n", i + 6)].decode()
 
@@ -770,8 +762,8 @@ def s_bad_files(threads):
             os.makedirs(d, exist_ok=True)
             return os.path.join(d, nm)
         def plant(nm, data):
-            open(where(nm), "wb").write(data); return where(nm)
-        src = open(real[0], "rb").read()
+            Path(where(nm)).write_bytes(data); return where(nm)
+        src = Path(real[0]).read_bytes()
         # another cache version, same key: not ours
         foreign = plant("f" * 32, bytes([src[0] ^ 0x7f]) + src[1:])
         # junk, and a file too short for a header
@@ -782,7 +774,7 @@ def s_bad_files(threads):
         # a FIFO and a symlink out of the cache: skipped, never opened
         fifo = where("b" * 32); os.mkfifo(fifo)
         os.makedirs(R + "/outside", exist_ok=True)
-        outside = R + "/outside/target"; open(outside, "wb").write(src)
+        outside = R + "/outside/target"; Path(outside).write_bytes(src)
         link = where("a" * 32); os.symlink(outside, link)
         # owned like nginx's own files: a match must be able to delete them
         import pwd
@@ -797,7 +789,7 @@ def s_bad_files(threads):
         t0 = time.time()
         if indexed:
             ok = wait_log(r'---- restart[\s\S]*build of "za" complete', 30)
-            txt = open(R + "/error.log").read().split("---- restart")[-1]
+            txt = Path(R + "/error.log").read_text().split("---- restart")[-1]
             log("  %s: build complete %s in %.1fs" % (sub, ok, time.time() - t0))
             # negative: none of these fails the build (ELOOP included)
             if not ok or re.search(r'build of "za" failed|could not be read', txt):
@@ -837,7 +829,7 @@ def s_readdir_eio(threads):
     shim(eio="/za/%s" % lv1); preload(True)
     restart_keep()
     time.sleep(4)
-    txt = open(R + "/error.log").read().split("---- restart")[-1]
+    txt = Path(R + "/error.log").read_text().split("---- restart")[-1]
     # negative: with a directory unreadable the build is not complete
     if 'build of "za" complete' in txt:
         FAIL.append(name + ": build complete with a directory it could not read")
