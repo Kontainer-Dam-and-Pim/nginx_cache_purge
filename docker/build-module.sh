@@ -20,15 +20,19 @@ case $ID in
         apk add --no-cache build-base linux-headers openssl-dev zlib-dev "$pcre_apk"
         ;;
     debian)
-        case $VERSION_CODENAME in
-            stretch|buster)
+        if curl -fsI --max-time 30 \
+            "http://archive.debian.org/debian/dists/$VERSION_CODENAME/Release" \
+            >/dev/null
+        then
+            for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
+                [ -f "$f" ] || continue
                 sed -i -e 's|deb.debian.org|archive.debian.org|g' \
-                       -e '/security.debian.org/d' -e '/-updates/d' \
-                       /etc/apt/sources.list
-                echo 'Acquire::Check-Valid-Until "false";' \
-                    > /etc/apt/apt.conf.d/99archive
-                ;;
-        esac
+                       -e 's|security.debian.org|archive.debian.org|g' \
+                       -e '/-updates/d' "$f"
+            done
+            echo 'Acquire::Check-Valid-Until "false";' \
+                > /etc/apt/apt.conf.d/99archive
+        fi
         apt-get update
         apt-get install -y --no-install-recommends \
             build-essential libssl-dev zlib1g-dev "$pcre_deb"
