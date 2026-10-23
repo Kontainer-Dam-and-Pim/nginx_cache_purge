@@ -9,7 +9,7 @@ FROM ubuntu:${UBUNTU_VERSION} AS base
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential clang cppcheck gdb jq \
+        build-essential clang cppcheck gdb jq llvm \
         libpcre2-dev libssl-dev zlib1g-dev \
         $(apt-cache show libpcre3-dev >/dev/null 2>&1 && echo libpcre3-dev) \
         $(apt-cache show libclang-rt-dev >/dev/null 2>&1 && echo libclang-rt-dev) \
@@ -32,12 +32,13 @@ RUN test -n "${NGINX_VERSION}" \
     && mv nginx-${NGINX_VERSION} /nginx-src \
     && rm nginx-${NGINX_VERSION}.tar.gz
 
-COPY t/ci/build-nginx.sh /usr/local/bin/
+COPY t/ci/build-nginx.sh /ci/
+COPY t/ci/lsan /ci/lsan/
 COPY config ngx_cache_purge_module.c /module/
 
 ARG CC=gcc
 ARG SANITIZE=
-RUN build-nginx.sh /nginx-src "${SANITIZE}" \
+RUN /ci/build-nginx.sh /nginx-src "${SANITIZE}" \
         --with-cc="${CC}" \
         --prefix=/etc/nginx \
         --sbin-path=/usr/sbin/nginx \

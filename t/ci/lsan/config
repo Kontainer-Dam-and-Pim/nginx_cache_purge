@@ -1,0 +1,2 @@
+ngx_addon_name=ngx_cache_purge_lsan
+NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/lsan_init_cycle.c"

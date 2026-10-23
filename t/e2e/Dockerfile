@@ -21,12 +21,13 @@ RUN test -n "${NGINX_VERSION}" \
     && rm nginx-${NGINX_VERSION}.tar.gz
 
 # only the module: harness edits do not rebuild nginx
-COPY t/ci/build-nginx.sh /usr/local/bin/
+COPY t/ci/build-nginx.sh /ci/
+COPY t/ci/lsan /ci/lsan/
 COPY config ngx_cache_purge_module.c /module/
 
 # SANITIZE=asan: nginx and the module with AddressSanitizer
 ARG SANITIZE=
-RUN build-nginx.sh /nginx-src "$SANITIZE" \
+RUN /ci/build-nginx.sh /nginx-src "$SANITIZE" \
         --prefix=/usr/local/nginx \
         --with-threads \
         --with-file-aio \
@@ -37,7 +38,7 @@ RUN build-nginx.sh /nginx-src "$SANITIZE" \
 # The same nginx without file AIO (threads only): aio threads reads of the
 # cache header take a code path of their own there (torture s_aio_threads)
 RUN cp -a /nginx-src /nginx-noaio \
-    && build-nginx.sh /nginx-noaio "$SANITIZE" \
+    && /ci/build-nginx.sh /nginx-noaio "$SANITIZE" \
         --prefix=/usr/local/nginx-noaio \
         --with-threads \
         --add-module=/module \
