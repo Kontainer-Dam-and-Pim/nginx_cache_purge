@@ -56,15 +56,29 @@ for changes and [distribution packages](#distribution-packages) for packaged bui
 
 ## Compatibility
 
-| nginx  | status     |
-|--------|------------|
-| 1.20.x | ✓ tested   |
-| 1.26.x | ✓ tested   |
-| 1.28.x | ✓ tested   |
-| 1.29.x | ✓ tested   |
-| 1.30.x | ✓ tested   |
+<!-- nginx-versions:start -->
+| nginx | Releases tested | Ubuntu |
+|---|---|---|
+| 1.20 | 1.20.0 – 1.20.2 (3 releases) | 20.04 |
+| 1.21 | 1.21.0 – 1.21.6 (7 releases) | 20.04 |
+| 1.22 | 1.22.0 – 1.22.1 (2 releases) | 24.04 |
+| 1.23 | 1.23.0 – 1.23.4 (5 releases) | 24.04 |
+| 1.24 | 1.24.0 | 24.04 |
+| 1.25 | 1.25.0 – 1.25.5 (6 releases) | 24.04 |
+| 1.26 | 1.26.0 – 1.26.3 (4 releases) | 24.04 |
+| 1.27 | 1.27.0 – 1.27.5 (6 releases) | 24.04 |
+| 1.28 | 1.28.0 – 1.28.3 (4 releases) | 24.04 |
+| 1.29 | 1.29.0 – 1.29.8 (9 releases) | 24.04 |
+| 1.30 | 1.30.0 – 1.30.6 (7 releases) | 24.04 |
+| 1.31 | 1.31.0 – 1.31.7 (8 releases) | 24.04 |
+| 1.31 | 1.31.8 | 24.04, 20.04 |
+<!-- nginx-versions:end -->
 
-CI runs the Test::Nginx suites against the versions above. The key index,
+CI builds and tests every nginx release from the oldest above on, listed in
+[`t/nginx-versions.json`](t/nginx-versions.json): it checks that the module's
+copies of nginx-private structs match each release's own layout and runs the
+Test::Nginx suites. A scheduled job opens a pull request adding each new
+nginx release to the matrix. The key index,
 thread pool and end-to-end suites have also been run by hand against 1.28.3,
 1.30.4, 1.30.5, 1.30.6 and 1.31.6, including under AddressSanitizer. Older releases
 back to 1.7.9 compile but are not covered by CI.
@@ -900,7 +914,7 @@ OF THE POSSIBILITY OF SUCH DAMAGE.
 - The original default branch ends on [23 December 2014](https://github.com/FRiCKLE/ngx_cache_purge/commit/331fe43e8d9a3d1fa5e0c9fec7d3201d431a9177). As of this check, twelve full years have not elapsed.
 - **Avoid “fully non-blocking.”** Without `cache_purge_thread_pool`, background walks and index builds do their disk I/O on the event loop, in slices of `cache_purge_walk_budget`. Exact-key purges are always synchronous, and `cache_purge_vary_aware` adds a synchronous directory walk to each one.
 - **Do not promise unchanged behavior for every upgrade.** The 2.5 status-code change alone makes that inaccurate. Release 3.0.0 also flags internal breaking changes.
-- **Describe CI configuration accurately.** The workflow targets NGINX 1.20.2, 1.26.3, 1.28.2, 1.29.6 and 1.30.6. Runs on 1.28.3, 1.30.4, 1.30.5 and 1.31.6 were done by hand, not in CI.
+- **Describe CI configuration accurately.** The workflow targets the versions in [`t/nginx-versions.json`](t/nginx-versions.json). Runs on 1.28.3, 1.30.4, 1.30.5 and 1.31.6 were done by hand, not in CI.
 - **Keep package links factual.** Downstream packaging demonstrates use of the source, not endorsement, an audit, or a support commitment from that distribution to this repository.
 
 ---
