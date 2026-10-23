@@ -8,19 +8,6 @@ FROM ubuntu:${UBUNTU_VERSION} AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Prioritized mirrors
-ARG UBUNTU_MIRROR=azure
-RUN case "${UBUNTU_MIRROR}" in \
-        azure)  MIRROR_URL="http://azure.archive.ubuntu.com/ubuntu/" ;; \
-        kernel) MIRROR_URL="http://mirrors.kernel.org/ubuntu/" ;; \
-        *)      echo "Unknown UBUNTU_MIRROR: ${UBUNTU_MIRROR}"; exit 1 ;; \
-    esac && \
-    for f in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do \
-        [ -f "$f" ] || continue; \
-        sed -i -e "s|http://archive.ubuntu.com/ubuntu/|${MIRROR_URL}|g" \
-               -e "s|http://security.ubuntu.com/ubuntu/|${MIRROR_URL}|g" "$f"; \
-    done
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential clang cppcheck gdb jq \
         libpcre2-dev libssl-dev zlib1g-dev \
