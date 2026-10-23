@@ -1,15 +1,20 @@
 # t/delete_errors.t -- a purge that could not delete a file answers 500
-use Test::Nginx::Socket 'no_plan';
 use File::Temp qw(tempdir);
 
-our $tmp = tempdir(CLEANUP => 1);
-chmod 0755, $tmp;
+our $tmp;
 
-my $shim = "$tmp/undeletable.so";
-system("cc", "-shared", "-fPIC", "-O2", "-o", $shim, "t/lib/undeletable.c",
-       "-ldl") == 0
-    or BAIL_OUT("could not build t/lib/undeletable.c");
-$ENV{TEST_NGINX_LD_PRELOAD} = $shim;
+BEGIN {
+    $tmp = tempdir(CLEANUP => 1);
+    chmod 0755, $tmp;
+
+    system("cc", "-shared", "-fPIC", "-O2", "-o", "$tmp/undeletable.so",
+           "t/lib/undeletable.c", "-ldl") == 0
+        or die "could not build t/lib/undeletable.c\n";
+
+    $ENV{LD_PRELOAD} = "$tmp/undeletable.so";
+}
+
+use Test::Nginx::Socket 'no_plan';
 
 my $port = server_port();
 
