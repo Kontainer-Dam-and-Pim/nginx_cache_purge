@@ -1,12 +1,13 @@
 # t/index.t -- cache_purge_index: wildcard purges answered from the key index
 use Test::Nginx::Socket 'no_plan';
-use Cwd qw(cwd);
+use File::Temp qw(tempdir);
 
-my $pwd  = cwd();
+our $tmp = tempdir(CLEANUP => 1);
+chmod 0755, $tmp;
 my $port = server_port();
 
 our $HttpConfig = qq{
-    proxy_cache_path $pwd/cache_idx levels=1:2 keys_zone=idx_zone:10m
+    proxy_cache_path $tmp/cache_idx levels=1:2 keys_zone=idx_zone:10m
                      inactive=60m use_temp_path=off;
     cache_purge_background_queue  on;
     cache_purge_throttle_ms       10ms;
@@ -137,7 +138,7 @@ GET /health
 # indexed purge_all skipped its file and still answered purged.  A cache of
 # its own: other blocks' entries would make the purge_all asynchronous.
 --- http_config eval
-"    proxy_cache_path " . Cwd::cwd() . "/cache_empty_" . $$ . " levels=1:2 keys_zone=idx_zone:10m inactive=60m use_temp_path=off;
+"    proxy_cache_path " . $::tmp . "/cache_empty levels=1:2 keys_zone=idx_zone:10m inactive=60m use_temp_path=off;
     cache_purge_background_queue  on;
     cache_purge_throttle_ms       10ms;
     cache_purge_index             4m;

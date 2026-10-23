@@ -1,15 +1,16 @@
 # t/basic.t
 use Test::Nginx::Socket 'no_plan';
-use Cwd qw(cwd);
+use File::Temp qw(tempdir);
 
-my $pwd  = cwd();
+our $tmp = tempdir(CLEANUP => 1);
+chmod 0755, $tmp;
 my $port = server_port();
 
 # HttpConfig: cache zone + upstream pointing at the test server itself.
 # location /cache  → cached proxy (all tests)
 # location /origin → mock backend that returns test content
 our $HttpConfig = qq{
-    proxy_cache_path $pwd/cache levels=1:2 keys_zone=cache_zone:10m
+    proxy_cache_path $tmp/cache levels=1:2 keys_zone=cache_zone:10m
                      max_size=1g inactive=60m;
     upstream backend {
         server 127.0.0.1:$port;
@@ -717,7 +718,7 @@ too long header
 # The merge took the first enabled protocol, fastcgi, even where the
 # location set proxy_cache_purge itself: no fastcgi cache there, 404.  A
 # separate-syntax location was wrapped by the fastcgi access handler too.
---- http_config eval: $::HttpConfig . "    fastcgi_cache_path " . Cwd::cwd() . "/fcgi_cache keys_zone=fcgi_zone:1m;\n"
+--- http_config eval: $::HttpConfig . "    fastcgi_cache_path " . $::tmp . "/fcgi_cache keys_zone=fcgi_zone:1m;\n"
 --- config
     fastcgi_cache_purge PURGE from 127.0.0.1;
     location /cache {
@@ -797,7 +798,7 @@ cache zone "nosuch" not found
 === TEST 34: a location's own fastcgi purge wins over an inherited proxy purge
 # The entry is in the proxy zone: the proxy purge would find it (200), the
 # location's own fastcgi purge looks in the fastcgi zone (412).
---- http_config eval: $::HttpConfig . "    fastcgi_cache_path " . Cwd::cwd() . "/fcgi_cache2 keys_zone=fcgi2_zone:1m;\n"
+--- http_config eval: $::HttpConfig . "    fastcgi_cache_path " . $::tmp . "/fcgi_cache2 keys_zone=fcgi2_zone:1m;\n"
 --- config
     proxy_cache_purge PURGE from 127.0.0.1;
     location /warm {
@@ -825,7 +826,7 @@ cache zone "nosuch" not found
 === TEST 35: synchronous purge_all of a cache never filled answers 200
 # No cache directory yet is an empty cache, not a read error.
 --- http_config eval
-"    proxy_cache_path " . Cwd::cwd() . "/never_filled_" . $$ . " keys_zone=nf_zone:1m;\n"
+"    proxy_cache_path " . $::tmp . "/never_filled keys_zone=nf_zone:1m;\n"
 --- config
     location /cache {
         proxy_cache       nf_zone;

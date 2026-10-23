@@ -4,20 +4,21 @@
 # process mode (it hangs, with or without this module), and Test::Nginx
 # reloads between blocks.
 use Test::Nginx::Socket 'no_plan';
-use Cwd qw(cwd);
+use File::Temp qw(tempdir);
 
 master_on();
 workers(2);
 
-my $pwd  = cwd();
+my $tmp  = tempdir(CLEANUP => 1);
+chmod 0755, $tmp;
 my $port = server_port();
 
 # Two cache zones, each with its own index, and the disk work in the
 # thread pool.
 our $HttpConfigThreads = qq{
-    proxy_cache_path $pwd/cache_idx_a levels=1:2 keys_zone=idx_a:10m
+    proxy_cache_path $tmp/cache_idx_a levels=1:2 keys_zone=idx_a:10m
                      inactive=60m use_temp_path=off;
-    proxy_cache_path $pwd/cache_idx_b levels=1:2 keys_zone=idx_b:10m
+    proxy_cache_path $tmp/cache_idx_b levels=1:2 keys_zone=idx_b:10m
                      inactive=60m use_temp_path=off;
     cache_purge_background_queue  on;
     cache_purge_throttle_ms       10ms;

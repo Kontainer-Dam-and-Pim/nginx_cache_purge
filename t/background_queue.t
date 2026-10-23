@@ -1,8 +1,9 @@
 # t/background_queue.t
 use Test::Nginx::Socket 'no_plan';
-use Cwd qw(cwd);
+use File::Temp qw(tempdir);
 
-my $pwd  = cwd();
+our $tmp = tempdir(CLEANUP => 1);
+chmod 0755, $tmp;
 my $port = server_port();
 
 # HttpConfig: cache zone + queue config + upstream.
@@ -11,7 +12,7 @@ my $port = server_port();
 # (proxy_cache alone is sufficient for the inline purge handler to
 #  resolve the cache zone).
 our $HttpConfig = qq{
-    proxy_cache_path $pwd/cache levels=1:2 keys_zone=cache_zone:10m
+    proxy_cache_path $tmp/cache levels=1:2 keys_zone=cache_zone:10m
                      max_size=1g inactive=60m;
     cache_purge_background_queue on;
     cache_purge_queue_size       100;
