@@ -8382,7 +8382,9 @@ typedef struct {
     ngx_array_t               *headers_source;
     /* FIX (#52): nginx 1.29.4 inserted host_set here -- without this guard
      * every subsequent field is at the wrong offset, causing a segfault. */
-#  if (nginx_version >= 1029004)
+#  if (nginx_version >= 1031004)
+    ngx_http_complex_value_t  *host_value;
+#  elif (nginx_version >= 1029004)
     ngx_uint_t                 host_set;
 #  endif
 #  if (nginx_version < 8040)
