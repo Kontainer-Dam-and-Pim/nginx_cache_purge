@@ -1,5 +1,6 @@
 """Shared pieces of the e2e harness: key set, nginx control, HTTP, logs."""
 
+import contextlib
 import http.client
 import json
 import os
@@ -148,10 +149,10 @@ class Nginx:
 
     def start(self, port, timeout=60):
         self.write_conf()
-        out = open(os.path.join(self.prefix, "logs", "stderr.log"), "ab")
-        self.proc = subprocess.Popen(
-            ["nginx", "-p", self.prefix + "/", "-c", "conf/nginx.conf"],
-            stdout=out, stderr=out, start_new_session=True)
+        with open(os.path.join(self.prefix, "logs", "stderr.log"), "ab") as out:
+            self.proc = subprocess.Popen(
+                ["nginx", "-p", self.prefix + "/", "-c", "conf/nginx.conf"],
+                stdout=out, stderr=out, start_new_session=True)
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self.proc.poll() is not None:
@@ -205,10 +206,8 @@ class Nginx:
                 self.proc.wait()
         # leftover workers of a killed master
         for p, _ in children(self.proc.pid):
-            try:
+            with contextlib.suppress(OSError):
                 os.kill(p, signal.SIGKILL)
-            except OSError:
-                pass
 
 
 class LogWatch:
@@ -283,10 +282,8 @@ class Client:
 
     def close(self):
         if self.conn is not None:
-            try:
+            with contextlib.suppress(OSError):
                 self.conn.close()
-            except Exception:
-                pass
             self.conn = None
 
 

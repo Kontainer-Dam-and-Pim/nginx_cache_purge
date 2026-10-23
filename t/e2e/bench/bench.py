@@ -6,7 +6,8 @@ cache, so a run does not depend on the one before; prints one JSON object.
 
     bench.py [--files N] [--reps R] [--threads] [--only a,b]
 """
-import argparse, http.client, json, os, re, shutil, statistics, subprocess, sys, time
+import argparse, contextlib, http.client, json, os, re, shutil, statistics, subprocess, sys, time
+from pathlib import Path
 
 NGINX = os.environ.get("BENCH_NGINX", "/usr/local/nginx/sbin/nginx")
 D = "/bench"
@@ -84,7 +85,7 @@ def seed(files):
 
 
 def start(c):
-    open(D + "/nginx.conf", "w").write(c)
+    Path(D + "/nginx.conf").write_text(c)
     open(D + "/error.log", "a").close()
     t0 = time.time()
     subprocess.run([NGINX, "-c", D + "/nginx.conf"], check=True)
@@ -95,7 +96,7 @@ def start(c):
 def wait_log(pat, t=600):
     end = time.time() + t
     while time.time() < end:
-        if re.search(pat, open(D + "/error.log").read()):
+        if re.search(pat, Path(D + "/error.log").read_text()):
             return time.time()
         time.sleep(0.05)
     raise SystemExit("timeout waiting for " + pat)
@@ -115,16 +116,14 @@ def nginx_cpu():
     """CPU seconds of the nginx workers so far (utime + stime)"""
     t = 0
     for pid in sh("pgrep", "-f", "nginx: worker").split():
-        try:
-            f = open("/proc/%s/stat" % pid).read().rsplit(")", 1)[1].split()
+        with contextlib.suppress(OSError):
+            f = Path("/proc/%s/stat" % pid).read_text().rsplit(")", 1)[1].split()
             t += int(f[11]) + int(f[12])
-        except OSError:
-            pass
     return t / os.sysconf("SC_CLK_TCK")
 
 
 def wrk(lua, dur=10, conns=64, threads=4):
-    open(D + "/w.lua", "w").write(lua)
+    Path(D + "/w.lua").write_text(lua)
     cpu0 = nginx_cpu()
     out = sh("wrk", "-t%d" % threads, "-c%d" % conns, "-d%ds" % dur, "--latency",
              "-s", D + "/w.lua", "http://127.0.0.1:%d" % PORT)
