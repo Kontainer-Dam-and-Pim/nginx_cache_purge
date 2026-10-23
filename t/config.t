@@ -1,8 +1,5 @@
 # t/config.t - Configuration validation tests
 use Test::Nginx::Socket 'no_plan';
-use Cwd qw(cwd);
-
-my $pwd = cwd();
 $ENV{TEST_NGINX_SERVROOT} = server_root();
 no_long_string();
 run_tests();

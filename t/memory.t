@@ -1,9 +1,10 @@
 # t/memory.t - Memory leak and usage tests
 use Test::Nginx::Socket 'no_plan';
-use Cwd qw(cwd);
+use File::Temp qw(tempdir);
 
-our $pwd = cwd();
-$ENV{TEST_NGINX_CACHE_ROOT} = $pwd;
+our $tmp = tempdir(CLEANUP => 1);
+chmod 0755, $tmp;
+$ENV{TEST_NGINX_CACHE_ROOT} = $tmp;
 $ENV{TEST_NGINX_SERVROOT}   = server_root();
 
 no_long_string();
@@ -27,9 +28,9 @@ __DATA__
     }
 --- init
     use File::Path qw(make_path);
-    make_path("$main::pwd/cache");
+    make_path("$main::tmp/cache");
     for my $i (1..1000) {
-        open my $fh, '>', "$main::pwd/cache/test_$i.cache";
+        open my $fh, '>', "$main::tmp/cache/test_$i.cache";
         print $fh "KEY: /purge/test_$i\nContent for file $i\n";
         close $fh;
     }
@@ -49,9 +50,9 @@ PURGE /purge/test*
     }
 --- init
     use File::Path qw(make_path);
-    make_path("$main::pwd/cache2");
+    make_path("$main::tmp/cache2");
     for my $i (1..100) {
-        open my $fh, '>', "$main::pwd/cache2/file_$i.cache";
+        open my $fh, '>', "$main::tmp/cache2/file_$i.cache";
         print $fh "KEY: /purge/batch$i/test\nContent\n";
         close $fh;
     }

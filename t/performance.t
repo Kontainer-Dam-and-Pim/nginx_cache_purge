@@ -1,9 +1,10 @@
 # t/performance.t - Performance and load tests
 use Test::Nginx::Socket 'no_plan';
-use Cwd qw(cwd);
+use File::Temp qw(tempdir);
 
-our $pwd = cwd();
-$ENV{TEST_NGINX_CACHE_ROOT} = $pwd;
+our $tmp = tempdir(CLEANUP => 1);
+chmod 0755, $tmp;
+$ENV{TEST_NGINX_CACHE_ROOT} = $tmp;
 $ENV{TEST_NGINX_SERVROOT}   = server_root();
 
 no_long_string();
@@ -29,10 +30,10 @@ __DATA__
 --- init
     use File::Path qw(make_path);
     use Time::HiRes qw(time);
-    make_path("$main::pwd/perfcache");
+    make_path("$main::tmp/perfcache");
     my $start = time();
     for my $i (1..5000) {
-        open my $fh, '>', "$main::pwd/perfcache/perf_$i.cache";
+        open my $fh, '>', "$main::tmp/perfcache/perf_$i.cache";
         print $fh "KEY: /purge/perf_$i\nPerformance test content\n";
         close $fh;
     }
@@ -55,9 +56,9 @@ PURGE /purge/perf*
     }
 --- init
     use File::Path qw(make_path);
-    make_path("$main::pwd/bgcache");
+    make_path("$main::tmp/bgcache");
     for my $i (1..1000) {
-        open my $fh, '>', "$main::pwd/bgcache/bg_$i.cache";
+        open my $fh, '>', "$main::tmp/bgcache/bg_$i.cache";
         print $fh "KEY: /purge/bg_$i\nBackground test\n";
         close $fh;
     }
@@ -78,10 +79,10 @@ PURGE /purge/perf*
     }
 --- init
     use File::Path qw(make_path);
-    make_path("$main::pwd/concurrent");
+    make_path("$main::tmp/concurrent");
     for my $i (1..100) {
         for my $j (1..10) {
-            open my $fh, '>', "$main::pwd/concurrent/conc_${i}_${j}.cache";
+            open my $fh, '>', "$main::tmp/concurrent/conc_${i}_${j}.cache";
             print $fh "KEY: /purge/batch$i/file$j\nConcurrent test\n";
             close $fh;
         }
@@ -105,9 +106,9 @@ PURGE /purge/perf*
 --- init
     use File::Path qw(make_path);
     use Time::HiRes qw(time);
-    make_path("$main::pwd/throttle");
+    make_path("$main::tmp/throttle");
     for my $i (1..50) {
-        open my $fh, '>', "$main::pwd/throttle/throttle_$i.cache";
+        open my $fh, '>', "$main::tmp/throttle/throttle_$i.cache";
         print $fh "KEY: /purge/throttle_$i\nThrottle test\n";
         close $fh;
     }
