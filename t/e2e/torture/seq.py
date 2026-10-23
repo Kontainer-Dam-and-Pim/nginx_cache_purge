@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import http.client, os, random, sys, threading, time, subprocess
+import http.client, os, random, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import tor
 threads = os.environ.get("MODE", "threads") == "threads"
 tor.start(tor.conf("cache_purge_index 64m;", workers=12, threads=threads, zones=[("za","levels=1:2","64m")]))
@@ -29,7 +29,7 @@ def checker(tid):
             st, xc = tor.req("GET", k + "obj", c=c)
             st2, _ = tor.req("PURGE", k + "*", c=c)
             st3, xc3 = tor.req("GET", k + "obj", c=c)
-        except Exception as e:
+        except Exception:
             c = http.client.HTTPConnection("127.0.0.1", 8080, timeout=30); continue
         if xc != "MISS" or st2 != 200 or xc3 != "MISS":
             bad.append("%s: GET %s purge %d then %s" % (k, xc, st2, xc3))

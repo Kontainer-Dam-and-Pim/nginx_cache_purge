@@ -8,7 +8,6 @@ import re
 import signal
 import socket
 import subprocess
-import threading
 import time
 
 DATA = os.environ.get("E2E_DATA", "/data")

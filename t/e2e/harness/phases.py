@@ -12,7 +12,7 @@ import threading
 import time
 
 from lib import (BUCKETS, CACHE_PORT, DATA, HARNESS, ORIGIN_PORT, RESULTS,
-                 Client, KeySet, Nginx, children, log, md5_path, percentiles,
+                 Client, Nginx, log, md5_path, percentiles,
                  rng)
 
 
