@@ -20,6 +20,7 @@ source](#build-from-source); changes are in the commit history.
 
 - [Features](#features)
 - [Compatibility](#compatibility)
+- [Docker images](#docker-images)
 - [Build from source](#build-from-source)
 - [Directives](#directives)
 - [Partial key purge](#partial-key-purge)
@@ -88,6 +89,25 @@ with leak detection, UndefinedBehaviorSanitizer and valgrind. A scheduled job
 opens a pull request adding each new nginx release to the matrix. The module
 keeps version guards back to nginx 1.7.9; releases before 1.20.0 are not
 tested.
+
+---
+
+### Docker images
+
+The official `nginx` image with the module compiled inside it (same libc and
+`configure` arguments) and loaded, for every nginx release CI tests that has
+an official image, Debian and Alpine:
+
+```bash
+docker pull ghcr.io/kontainer-dam-and-pim/nginx-cache-purge:1.31.8
+docker pull ghcr.io/kontainer-dam-and-pim/nginx-cache-purge:1.31.8-alpine
+docker pull ghcr.io/kontainer-dam-and-pim/nginx-cache-purge:latest   # newest, also :alpine
+```
+
+They behave like `nginx:<version>`: put the configuration in
+`/etc/nginx/conf.d/`. A replacement `/etc/nginx/nginx.conf` needs
+`load_module modules/ngx_http_cache_purge_module.so;` at the top. Each image
+is smoke-tested (cache, purge, refill) before it is published. amd64 only.
 
 ---
 
