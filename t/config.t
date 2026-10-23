@@ -331,3 +331,16 @@ GET /purge/%3Cb%3E%22q%22*
 --- request
 GET /health
 --- error_code: 200
+
+=== TEST 21: "from all" followed by addresses is rejected, not taken as all
+--- http_config
+    proxy_cache_path $TEST_NGINX_SERVROOT/cache keys_zone=fa_zone:1m;
+--- config
+    location /cache {
+        proxy_cache       fa_zone;
+        proxy_cache_key   $uri;
+        proxy_cache_purge PURGE from all 10.0.0.1;
+    }
+--- must_die
+--- error_log eval
+qr/"from all" takes no addresses, "10\.0\.0\.1" given/
