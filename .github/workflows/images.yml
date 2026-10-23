@@ -1,0 +1,106 @@
+name: Images
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  versions:
+    name: Versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.read.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: read
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          all=$(t/ci/nginx_versions.py images)
+          if [ "$EVENT" = pull_request ]; then
+              echo "matrix=$(jq -c 'map(select(.latest))' <<<"$all")" >> "$GITHUB_OUTPUT"
+          else
+              echo "matrix=$all" >> "$GITHUB_OUTPUT"
+          fi
+
+  image:
+    name: nginx ${{ matrix.nginx }}${{ matrix.variant }}
+    needs: versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.versions.outputs.matrix) }}
+    env:
+      PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Tags
+        id: tags
+        env:
+          NGINX: ${{ matrix.nginx }}
+          VARIANT: ${{ matrix.variant }}
+          LATEST: ${{ matrix.latest }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/nginx-cache-purge"
+          tags="$image:$NGINX$VARIANT"
+          if [ "$LATEST" = true ] && [ -z "$VARIANT" ]; then
+              tags+=",$image:latest"
+          elif [ "$LATEST" = true ]; then
+              tags+=",$image:${VARIANT#-}"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          build-args: |
+            NGINX_VERSION=${{ matrix.nginx }}
+            VARIANT=${{ matrix.variant }}
+          tags: nginx-cache-purge:smoke
+          load: true
+          provenance: false
+      - name: Smoke test
+        run: docker/smoke.sh nginx-cache-purge:smoke
+      - if: env.PUBLISH == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish
+        if: env.PUBLISH == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          build-args: |
+            NGINX_VERSION=${{ matrix.nginx }}
+            VARIANT=${{ matrix.variant }}
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=nginx ${{ matrix.nginx }} with ngx_cache_purge
+          push: true
+          provenance: false
