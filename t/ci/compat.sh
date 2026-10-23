@@ -14,8 +14,8 @@ cp -a "$src/." "$minimal"
 cd "$minimal"
 rm -rf objs Makefile
 
-echo "== minimal build with clang: no SSL, no PCRE"
-./configure --with-cc=clang --with-cc-opt="-g" \
+echo "== minimal debug build with clang: no SSL, no PCRE"
+./configure --with-cc=clang --with-cc-opt="-g" --with-debug \
     --without-http_rewrite_module --without-pcre \
     --with-threads --add-module="$module"
 make -j"$(nproc)" >/dev/null

@@ -8,7 +8,8 @@ trap 'rm -rf "$reports"' EXIT
 chmod 1777 "$reports"
 
 export UBSAN_OPTIONS="print_stacktrace=1,suppressions=$PWD/t/ci/ubsan.supp"
-export ASAN_OPTIONS="detect_leaks=0,log_path=$reports/asan"
+export LSAN_OPTIONS="suppressions=$PWD/t/ci/lsan.supp,print_suppressions=0"
+export ASAN_OPTIONS="detect_leaks=1,log_path=$reports/asan"
 
 if [ "${VALGRIND:-0}" = 1 ]; then
     export TEST_NGINX_USE_VALGRIND="--tool=memcheck --num-callers=50 --leak-check=no --track-origins=yes --log-file=$reports/valgrind.%p"
