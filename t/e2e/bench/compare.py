@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """compare.py DIR: medians of bench.py runs <mode>-<build>-<rep>.json in
-DIR, the builds side by side, and the change from the first to the second.
+DIR, per mode the builds side by side, and the change from the first to the
+second.
 
     compare.py DIR [--a base] [--b head]
 """
@@ -40,7 +41,8 @@ def main():
     d = sys.argv[1]
     a = sys.argv[sys.argv.index("--a") + 1] if "--a" in sys.argv else "base"
     b = sys.argv[sys.argv.index("--b") + 1] if "--b" in sys.argv else "1.30.6"
-    for mode in ("inline", "threads"):
+    modes = sorted({Path(f).name.split("-", 1)[0] for f in glob.glob(os.path.join(d, "*-*-*.json"))})
+    for mode in modes:
         ra, rb = load(d, mode, a), load(d, mode, b)
         if not ra or not rb:
             continue

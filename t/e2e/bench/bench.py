@@ -6,11 +6,12 @@ cache, so a run does not depend on the one before; prints one JSON object.
 
     bench.py [--files N] [--reps R] [--threads] [--only a,b]
 """
-import argparse, contextlib, http.client, json, os, re, shutil, statistics, subprocess, sys, time
+import argparse, contextlib, glob, http.client, json, os, re, shutil, statistics, subprocess, sys, time
 from pathlib import Path
 
 NGINX = os.environ.get("BENCH_NGINX", "/usr/local/nginx/sbin/nginx")
-D = "/bench"
+D = os.environ.get("BENCH_DIR", "/bench")
+NOFADVISE = "/tmp/nofadvise.so"
 PORT, ORIGIN = 8080, 8081
 
 
@@ -18,7 +19,7 @@ def sh(*a, **kw):
     return subprocess.run(a, check=True, capture_output=True, text=True, **kw).stdout
 
 
-def conf(threads, queue=True, index=True, workers=4):
+def conf(a, queue=True, index=True, workers=4, refresh=None):
     # root: cachegen writes the cache as root
     return f"""
 user root;
@@ -26,7 +27,7 @@ worker_processes {workers};
 worker_rlimit_nofile 65536;
 error_log {D}/error.log notice;
 pid {D}/nginx.pid;
-{"thread_pool bench threads=8;" if threads else ""}
+{"thread_pool bench threads=%d;" % a.pool_threads if a.threads else ""}
 events {{ worker_connections 16384; }}
 http {{
     access_log off;
@@ -37,7 +38,8 @@ http {{
     cache_purge_queue_size 16384;
     cache_purge_batch_size 1024;
     {"cache_purge_index 256m;" if index else ""}
-    {"cache_purge_thread_pool bench;" if threads else ""}
+    {"cache_purge_index_refresh %s;" % refresh if refresh else ""}
+    {"cache_purge_thread_pool bench tasks=%d;" % a.tasks if a.threads else ""}
     cache_purge_response_type text;
     upstream origin {{ server 127.0.0.1:{ORIGIN}; keepalive 64; }}
     server {{
@@ -84,13 +86,34 @@ def seed(files):
        "--variants", "8", "--tenants", "64")
 
 
-def start(c):
-    Path(D + "/nginx.conf").write_text(c)
+def drop_caches():
+    os.sync()
+    try:
+        Path("/proc/sys/vm/drop_caches").write_text("3")
+    except OSError as e:
+        raise SystemExit("--cold: cannot drop the page cache (%s); run the container --privileged" % e) from e
+
+
+def nginx_env(a):
+    if not a.no_fadvise:
+        return None
+    if not os.path.exists(NOFADVISE):
+        sh("gcc", "-shared", "-fPIC", "-O2", "-Wall", "-Werror", "-o", NOFADVISE,
+           os.path.join(os.path.dirname(os.path.abspath(__file__)), "nofadvise.c"))
+    return dict(os.environ, LD_PRELOAD=NOFADVISE)
+
+
+def start(a, wrap=(), **kw):
+    Path(D + "/nginx.conf").write_text(conf(a, **kw))
     open(D + "/error.log", "a").close()
+    if a.cold:
+        drop_caches()
     t0 = time.time()
-    subprocess.run([NGINX, "-c", D + "/nginx.conf"], check=True)
+    p = subprocess.Popen([*wrap, NGINX, "-c", D + "/nginx.conf"], env=nginx_env(a))
+    if not wrap and p.wait() != 0:
+        raise SystemExit("nginx -c %s/nginx.conf exited with %d" % (D, p.returncode))
     time.sleep(0.3)
-    return t0
+    return t0, p
 
 
 def wait_log(pat, t=600):
@@ -162,7 +185,7 @@ end
 def m_build(a):
     """index build over the seeded files: ms from start to complete"""
     seed(a.files)
-    t0 = start(conf(a.threads))
+    t0, _ = start(a)
     t1 = wait_log(r'build of "images" complete')
     return {"build_ms": round((t1 - t0) * 1000)}
 
@@ -179,7 +202,7 @@ def m_hits(a):
     """GETs of seeded keys (HITs), and fills of unseeded ones (MISS: the
     header filter records each in the index)"""
     seed(a.files)
-    start(conf(a.threads))
+    start(a)
     wait_log(r'build of "images" complete')
     check("GET", key(5), (200, "HIT"))
     check("GET", key(a.files + 5), (200, "MISS"))
@@ -195,7 +218,7 @@ def m_exact(a):
     out = {}
     for name, prefix in (("inline", ""), ("separate", "/sep")):
         seed(a.files)
-        start(conf(a.threads))
+        start(a)
         wait_log(r'build of "images" complete')
         check("PURGE", prefix + key(3), (200, None))
         out[name] = wrk(LUA_KEYS % (a.files, "PURGE", prefix, "false"), dur=a.dur)
@@ -230,7 +253,7 @@ def m_exact_hit(a):
     files = max(a.files, 600000)            # ~60k purges/s per thread
     for name, prefix in (("inline", ""), ("separate", "/sep")):
         seed(files)
-        start(conf(a.threads))
+        start(a)
         wait_log(r'build of "images" complete')
         # one second: the threads stay within their ranges
         r = wrk(LUA_EACH % (files, prefix, 4), dur=1, conns=4, threads=4)
@@ -242,7 +265,7 @@ def m_exact_hit(a):
 def m_wildcard(a):
     """indexed wildcard per asset (8 files each), one at a time: latency"""
     seed(a.files)
-    start(conf(a.threads))
+    start(a)
     wait_log(r'build of "images" complete')
     c = http.client.HTTPConnection("127.0.0.1", PORT)
     lat = []
@@ -263,7 +286,7 @@ def m_walk(a):
     """synchronous wildcard walk over the whole cache (no queue, no index):
     every file opened and its key read"""
     seed(a.files)
-    start(conf(a.threads, queue=False, index=False, workers=1))
+    start(a, queue=False, index=False, workers=1)
     c = http.client.HTTPConnection("127.0.0.1", PORT, timeout=600)
     t = time.perf_counter()
     c.request("PURGE", "/cdn/t7/a7/*")          # matches 8 of them
@@ -275,7 +298,7 @@ def m_purge_all(a):
     """queued purge_all of the whole cache without an index: until the disk
     is empty"""
     seed(a.files)
-    start(conf(a.threads, index=False))
+    start(a, index=False)
     c = http.client.HTTPConnection("127.0.0.1", PORT)
     t = time.perf_counter()
     c.request("PURGE", "/purgeall/x")
@@ -285,8 +308,53 @@ def m_purge_all(a):
     return {"purge_all_ms": round((time.perf_counter() - t) * 1000), "status": r.status}
 
 
+def m_refresh(a):
+    """index refresh that reads every directory, after the index is built:
+    ms the module logs for it"""
+    seed(a.files)
+    start(a, refresh="10s")
+    wait_log(r'build of "images" complete')
+    for d in glob.glob(D + "/cache/images/*/*/"):
+        os.utime(d)
+    if a.cold:
+        drop_caches()
+    if "refreshing the key index" in Path(D + "/error.log").read_text():
+        raise SystemExit("the refresh began before the directories were touched")
+    wait_log(r'refresh of "images" complete')
+    m = re.search(r'refresh of "images" complete: (\d+) file\(s\) read, .* in (\d+)ms',
+                  Path(D + "/error.log").read_text())
+    if int(m.group(1)) != a.files:
+        raise SystemExit("refresh read %s files, seeded %d" % (m.group(1), a.files))
+    return {"refresh_ms": int(m.group(2))}
+
+
+def strace_counts(path):
+    calls = {}
+    for line in Path(path).read_text().splitlines():
+        f = line.split()
+        if len(f) >= 5 and f[0][0].isdigit() and f[-1] != "total":
+            calls[f[-1]] = int(f[3])
+    return calls
+
+
+def m_syscalls(a):
+    """syscalls of an index build, per file seeded (nginx under strace -f)"""
+    seed(a.files)
+    out = D + "/strace.txt"
+    _, p = start(a, wrap=("strace", "-f", "-c", "-o", out,
+                          "-e", "trace=openat,fadvise64,pread64,close"))
+    wait_log(r'build of "images" complete')
+    stop()
+    if p.wait(60) != 0:
+        raise SystemExit("strace exited with %d" % p.returncode)
+    calls = strace_counts(out)
+    return {s: round(calls.get(s, 0) / a.files, 3)
+            for s in ("openat", "fadvise64", "pread64", "close")}
+
+
 MEASURES = {"build": m_build, "hits": m_hits, "exact": m_exact, "exact_hit": m_exact_hit,
-            "wildcard": m_wildcard, "walk": m_walk, "purge_all": m_purge_all}
+            "wildcard": m_wildcard, "walk": m_walk, "purge_all": m_purge_all,
+            "refresh": m_refresh, "syscalls": m_syscalls}
 
 
 def main():
@@ -295,10 +363,15 @@ def main():
     p.add_argument("--reps", type=int, default=3)
     p.add_argument("--dur", type=int, default=10)
     p.add_argument("--threads", action="store_true")
+    p.add_argument("--tasks", type=int, default=4)
+    p.add_argument("--pool-threads", type=int, default=8)
+    p.add_argument("--cold", action="store_true")
+    p.add_argument("--no-fadvise", action="store_true")
     p.add_argument("--only", default="")
     a = p.parse_args()
     only = [x for x in a.only.split(",") if x]
-    res = {"threads": a.threads, "files": a.files, "runs": {}}
+    res = {"threads": a.threads, "tasks": a.tasks, "pool_threads": a.pool_threads,
+           "cold": a.cold, "no_fadvise": a.no_fadvise, "files": a.files, "runs": {}}
     for name, f in MEASURES.items():
         if only and name not in only:
             continue

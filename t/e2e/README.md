@@ -159,10 +159,19 @@ DUR=120 t/e2e/torture.sh --seq
 a cache seeded with `cachegen`: index build time, HIT and fill throughput,
 exact purges (misses, and ones that each find their file; inline and
 separate syntax), indexed wildcard latency, a synchronous full walk, and a
-queued purge_all. Each measure seeds its own cache and reports worker CPU
-per request next to the rate: the rate of a one-second wrk run is
-bimodal on a busy machine, the CPU is steadier. `compare.py DIR` prints the
-medians of `<mode>-<build>-<rep>.json` runs side by side.
+queued purge_all, an index refresh that reads every directory, and the
+syscalls of an index build per file (under `strace -f`). Each measure seeds
+its own cache and reports worker CPU per request next to the rate: the rate
+of a one-second wrk run is bimodal on a busy machine, the CPU is steadier.
+`compare.py DIR` prints, per mode, the medians of `<mode>-<build>-<rep>.json`
+runs side by side.
+
+`--tasks` and `--pool-threads` set `cache_purge_thread_pool ... tasks=` and the
+pool's size with `--threads`. `--cold` drops the page, dentry and inode caches
+before nginx starts (and before the refresh), which needs `--privileged`.
+`--no-fadvise` preloads `nofadvise.c`, a `posix_fadvise()` that does nothing,
+to measure the build's read-ahead hints without another build. `BENCH_DIR`
+moves the data off the container's own file system, onto a mounted disk.
 
 ```bash
 docker run --rm --ulimit nofile=200000:200000 -v $PWD/t/e2e/bench:/b:ro \

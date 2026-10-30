@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential libpcre2-dev libssl-dev zlib1g-dev \
-        wget ca-certificates python3 wrk gdb procps psmisc curl util-linux \
+        wget ca-certificates python3 wrk gdb strace procps psmisc curl util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 ARG NGINX_VERSION
