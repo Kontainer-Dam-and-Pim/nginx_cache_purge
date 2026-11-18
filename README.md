@@ -76,9 +76,9 @@ source](#build-from-source); changes are in the commit history.
 | 1.27 | 1.27.0 – 1.27.5 (6 releases) | 24.04 |
 | 1.28 | 1.28.0 – 1.28.3 (4 releases) | 24.04 |
 | 1.29 | 1.29.0 – 1.29.8 (9 releases) | 24.04 |
-| 1.30 | 1.30.0 – 1.30.6 (7 releases) | 24.04 |
-| 1.31 | 1.31.0 – 1.31.7 (8 releases) | 24.04 |
-| 1.31 | 1.31.8 | 24.04, 20.04 |
+| 1.30 | 1.30.0 – 1.30.7 (8 releases) | 24.04 |
+| 1.31 | 1.31.0 – 1.31.8 (9 releases) | 24.04 |
+| 1.31 | 1.31.9 | 24.04, 20.04 |
 <!-- nginx-versions:end -->
 
 CI builds and tests every nginx release from the oldest above on, listed in
