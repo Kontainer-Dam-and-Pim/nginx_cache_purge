@@ -85,8 +85,10 @@ CI builds and tests every nginx release from the oldest above on, listed in
 [`t/nginx-versions.json`](t/nginx-versions.json): it checks that the module's
 copies of nginx-private structs match each release's own layout and runs the
 Test::Nginx suites. The newest release also runs them under AddressSanitizer
-with leak detection, UndefinedBehaviorSanitizer and valgrind. A scheduled job
-opens a pull request adding each new nginx release to the matrix. The module
+with leak detection, UndefinedBehaviorSanitizer and valgrind. A job every five minutes
+opens a pull request adding each new nginx release to the matrix and merges it
+once CI, Analysis and Images pass on it, so the published images follow nginx
+releases within hours. The module
 keeps version guards back to nginx 1.7.9; releases before 1.20.0 are not
 tested.
 

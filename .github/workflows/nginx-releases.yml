@@ -2,7 +2,7 @@ name: nginx releases
 
 on:
   schedule:
-    - cron: '17 5 * * *'
+    - cron: '2-59/5 * * * *'
   workflow_dispatch:
 
 permissions: {}
@@ -14,7 +14,7 @@ jobs:
   bump:
     name: Track nginx releases
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 90
     permissions:
       actions: write
       contents: write
@@ -70,6 +70,51 @@ jobs:
               gh pr create --base "$BASE" --head "$BRANCH" \
                   --title "nginx versions: $summary" --body "$body"
           fi
+      - name: Merge the pull request once its checks pass
+        env:
+          BASE: ${{ github.event.repository.default_branch }}
+          GATES: ci.yml analysis.yml images.yml
+        run: |
+          open=$(gh pr list --head "$BRANCH" --state open \
+              --json number,headRefOid --jq '.[0] // empty | "\(.number) \(.headRefOid)"')
+          if [ -z "$open" ]; then
+              echo "no open $BRANCH pull request"
+              exit 0
+          fi
+          read -r pr sha <<<"$open"
 
-          gh workflow run ci.yml --ref "$BRANCH"
-          gh workflow run analysis.yml --ref "$BRANCH"
+          run_of() {
+              gh run list --workflow "$1" --commit "$sha" --event workflow_dispatch \
+                  --limit 1 --json databaseId,status,conclusion,url --jq '.[0] // empty'
+          }
+
+          ids=()
+          for gate in $GATES; do
+              run=$(run_of "$gate")
+              if [ -z "$run" ]; then
+                  gh workflow run "$gate" --ref "$BRANCH"
+                  for _ in $(seq 30); do
+                      sleep 10
+                      run=$(run_of "$gate")
+                      [ -n "$run" ] && break
+                  done
+                  if [ -z "$run" ]; then
+                      echo "::error::$gate on $sha was dispatched but no run appeared"
+                      exit 1
+                  fi
+              elif [ "$(jq -r .status <<<"$run")" = completed ] \
+                  && [ "$(jq -r .conclusion <<<"$run")" != success ]; then
+                  echo "::warning::#$pr stays open: $gate failed on $sha, $(jq -r .url <<<"$run")"
+                  exit 0
+              fi
+              ids+=("$(jq -r .databaseId <<<"$run")")
+          done
+
+          for id in "${ids[@]}"; do
+              gh run watch "$id" --exit-status --interval 30 >/dev/null
+          done
+
+          gh pr merge "$pr" --merge --match-head-commit "$sha" --delete-branch
+          for gate in $GATES; do
+              gh workflow run "$gate" --ref "$BASE"
+          done
