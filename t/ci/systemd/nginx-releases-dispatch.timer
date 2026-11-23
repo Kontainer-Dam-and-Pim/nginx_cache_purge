@@ -1,0 +1,9 @@
+[Unit]
+Description=Dispatch the nginx releases workflow of ngx_cache_purge every five minutes
+
+[Timer]
+OnCalendar=*:0/5
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

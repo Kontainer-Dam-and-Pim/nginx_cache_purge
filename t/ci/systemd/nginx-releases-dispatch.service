@@ -1,0 +1,14 @@
+[Unit]
+Description=Dispatch the nginx releases workflow of ngx_cache_purge
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/curl --fail-with-body --silent --show-error --max-time 30 \
+    --request POST \
+    --header @%E/nginx-releases-dispatch/auth-header \
+    --header "Accept: application/vnd.github+json" \
+    --header "X-GitHub-Api-Version: 2022-11-28" \
+    --data "{\"ref\":\"master\"}" \
+    https://api.github.com/repos/Kontainer-Dam-and-Pim/nginx_cache_purge/actions/workflows/nginx-releases.yml/dispatches

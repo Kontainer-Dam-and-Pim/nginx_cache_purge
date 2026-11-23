@@ -19,6 +19,7 @@ t/
 │   ├── ubsan.supp          #   UBSan findings inside nginx itself, not the module
 │   ├── lsan.supp           #   the one allocation nginx core leaves to process exit
 │   ├── lsan/               #   keeps nginx's bootstrap pool reachable when startup fails
+│   ├── systemd/            #   user timer that dispatches nginx-releases.yml every five minutes
 │   └── nginx_versions.py   #   matrix, README table, new nginx releases
 ├── e2e/                    # End-to-end suite (see e2e/README.md)
 ├── basic.t                 # Core purge functionality
@@ -105,10 +106,27 @@ on nginx ≥ 1.27:
 | `ci.yml` | push, PR, daily | every release in `nginx-versions.json`: build, struct layouts, Test::Nginx suites; newest nginx also on the old toolchain, under ASan + UBSan and under valgrind |
 | `analysis.yml` | push, PR, weekly | strict warnings + cppcheck (gates); clang/gcc analyzers and CodeQL to code scanning; Semgrep; actionlint, zizmor, shellcheck, pyflakes; README table in sync |
 | `images.yml` | push to master (PR: newest only, not published) | official `nginx:<version>` and `-alpine` images, and Rocky Linux 9 with the nginx.org RPM (`-rocky`), with the module loaded, for every tested version that has one: built, smoke-tested (cache, purge, refill) and pushed to `ghcr.io/kontainer-dam-and-pim/nginx-cache-purge` |
-| `nginx-releases.yml` | daily | adds new nginx.org releases to `nginx-versions.json` and the README in one pull request; dispatches CI on it |
+| `nginx-releases.yml` | every five minutes, dispatched by `ci/systemd/` | adds new nginx.org releases to `nginx-versions.json` and the README in one pull request; dispatches CI, Analysis and Images on it and merges it once they pass |
 
 `nginx-versions.json` lists every nginx release from `floor` on, each with
 the one Ubuntu release it builds on (24.04, or 20.04 where nginx predates
 OpenSSL 3 support); the newest is also tested on `newest_also_on`, the oldest
 toolchain. `nginx-releases.yml` adds each new release with the newest entry's
 Ubuntu. Raising the floor is a decision, not a release: it is edited by hand.
+
+### Dispatching `nginx-releases.yml`
+
+GitHub runs `schedule` triggers late or not at all, so the five-minute check
+comes from a systemd user timer on the jenkins host calling the
+`workflow_dispatch` API; the workflow's own `schedule` is only a fallback.
+The token is a fine-grained personal access token for this repository alone,
+with Actions read and write.
+
+```bash
+install -m 644 t/ci/systemd/nginx-releases-dispatch.* ~/.config/systemd/user/
+install -d -m 700 ~/.config/nginx-releases-dispatch
+(umask 077; printf 'Authorization: Bearer %s\n' "$TOKEN" > ~/.config/nginx-releases-dispatch/auth-header)
+loginctl enable-linger
+systemctl --user daemon-reload
+systemctl --user enable --now nginx-releases-dispatch.timer
+```
