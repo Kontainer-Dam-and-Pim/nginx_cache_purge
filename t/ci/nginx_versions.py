@@ -3,20 +3,31 @@
 "floor" on, each on one Ubuntu release, and the newest also on
 "newest_also_on" (the oldest toolchain).
 
-usage: nginx_versions.py matrix   GitHub Actions matrix (JSON) of every nginx x Ubuntu pair
-       nginx_versions.py pairs    the same pairs, one "nginx ubuntu" per line
+usage: nginx_versions.py ci [BASE]
+                                  CI plan (JSON): the nginx x Ubuntu pairs to test, the
+                                  Ubuntu releases they need and whether the memory
+                                  checks run on the newest nginx. Every pair, unless
+                                  the changes since the git commit BASE touch nothing
+                                  but the version list: then only the added pairs.
+       nginx_versions.py pairs    every pair, one "nginx ubuntu" per line
        nginx_versions.py latest   the newest nginx in the file
-       nginx_versions.py images   matrix (JSON) of the versions with a base to build an
-                                  image on (an official nginx image, or an nginx.org
-                                  el9 RPM for Rocky), per variant, the newest marked
-                                  "latest"
+       nginx_versions.py images all|missing|since BASE
+                                  matrix (JSON) of the images to build, with their tags:
+                                  per variant, every version with a base to build on
+                                  (an official nginx image, or an nginx.org el9 RPM for
+                                  Rocky). "missing" leaves out the tags already in
+                                  IMAGE, read with $GITHUB_TOKEN; "since" is "all" when
+                                  the image inputs changed since BASE, else "missing".
        nginx_versions.py render   rewrite the README compatibility table from the file
        nginx_versions.py update   add nginx.org releases from the floor on to the file and
                                   the README, print what was added
 """
 
+import base64
 import json
+import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -25,10 +36,17 @@ from itertools import groupby
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSIONS = ROOT / "t" / "nginx-versions.json"
-README = ROOT / "README.md"
+VERSIONS_PATH = "t/nginx-versions.json"
+VERSIONS = ROOT / VERSIONS_PATH
+README_PATH = "README.md"
+README = ROOT / README_PATH
+VERSION_LIST_ONLY = frozenset({VERSIONS_PATH, README_PATH})
+IMAGE_INPUTS = ("docker/", "config", "ngx_cache_purge_module.c")
+MEMORY_UBUNTU = "24.04"
+IMAGE = "ghcr.io/kontainer-dam-and-pim/nginx-cache-purge"
 DOWNLOADS = "https://nginx.org/download/"
-HUB_TAGS = "https://hub.docker.com/v2/repositories/library/nginx/tags/"
+HUB = ("https://registry-1.docker.io", "library/nginx",
+       "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/nginx:pull")
 EL_RPMS = ("https://nginx.org/packages/rhel/9/x86_64/RPMS/",
            "https://nginx.org/packages/mainline/rhel/9/x86_64/RPMS/")
 TARBALL = re.compile(r"nginx-(\d+)\.(\d+)\.(\d+)\.tar\.gz")
@@ -62,8 +80,8 @@ class Matrix:
         return pairs
 
 
-def load():
-    data = json.loads(VERSIONS.read_text())
+def load(text=None):
+    data = json.loads(VERSIONS.read_text() if text is None else text)
     m = Matrix(parse_version(data["floor"]), data["newest_also_on"],
                tuple((parse_version(e["nginx"]), e["ubuntu"])
                      for e in data["versions"]))
@@ -105,27 +123,110 @@ def el_rpms():
     return set().union(*(listed(url, EL_RPM) for url in EL_RPMS))
 
 
-def official_image(tag):
+def fetch_json(url, headers):
+    req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(HUB_TAGS + tag, timeout=30):  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-            return True
+        with urllib.request.urlopen(req, timeout=30) as resp:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+            return json.load(resp), resp.headers.get("Link")
     except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return False
-        raise RuntimeError(f"Docker Hub tag lookup of nginx:{tag}: {e}") from e
+        raise RuntimeError(f"GET {url}: {e}") from e
+
+
+NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
+
+
+def registry_tags(registry, repository, token_url, token_headers):
+    token = fetch_json(token_url, token_headers)[0]["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    tags, path = set(), f"/v2/{repository}/tags/list?n=10000"
+    while path:
+        page, link = fetch_json(registry + path, headers)
+        tags.update(page.get("tags") or ())
+        found = NEXT_LINK.search(link or "")
+        path = found and found.group(1)
+    return tags
+
+
+def hub_tags():
+    registry, repository, token_url = HUB
+    return registry_tags(registry, repository, token_url, {})
+
+
+def published_tags(github_token):
+    host, repository = IMAGE.split("/", 1)
+    basic = base64.b64encode(f"x:{github_token}".encode()).decode()
+    return registry_tags(
+        f"https://{host}", repository,
+        f"https://{host}/token?service={host}&scope=repository:{repository}:pull",
+        {"Authorization": f"Basic {basic}"})
+
+
+def tag(version, variant):
+    return f"{show(version)}{variant}"
+
+
+def image_tags(version, variant, latest):
+    tags = [f"{IMAGE}:{tag(version, variant)}"]
+    if latest:
+        tags.append(f"{IMAGE}:{variant[1:] or 'latest'}")
+    return tags
 
 
 def images(m):
     newest = m.versions[-1][0]
-    rpms = el_rpms()
+    rpms, hub = el_rpms(), hub_tags()
     variants = {
-        "": lambda v: official_image(show(v)),
-        "-alpine": lambda v: official_image(show(v) + "-alpine"),
+        "": lambda v: tag(v, "") in hub,
+        "-alpine": lambda v: tag(v, "-alpine") in hub,
         "-rocky": lambda v: v in rpms,
     }
-    return [{"nginx": show(v), "variant": variant, "latest": v == newest}
+    return [{"nginx": show(v), "variant": variant, "latest": v == newest,
+             "tag": tag(v, variant),
+             "tags": ",".join(image_tags(v, variant, v == newest))}
             for v, _ in m.versions for variant, available in variants.items()
             if available(v)]
+
+
+def git(*args):
+    try:
+        return subprocess.run(["git", *args], cwd=ROOT, check=True,
+                              capture_output=True, text=True).stdout
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"git {' '.join(args)}: {e.stderr.strip()}") from e
+
+
+def changed_since(base):
+    return set(git("diff", "--name-only", base, "HEAD").split())
+
+
+def ci_plan(m, base):
+    if base is None or not changed_since(base) <= VERSION_LIST_ONLY:
+        pairs, memory = m.pairs(), True
+    else:
+        before = load(git("show", f"{base}:{VERSIONS_PATH}"))
+        known = set(before.pairs())
+        pairs = [p for p in m.pairs() if p not in known]
+        memory = m.versions[-1][0] != before.versions[-1][0]
+    ubuntu = sorted({u for _, u in pairs} | ({MEMORY_UBUNTU} if memory else set()))
+    return {"matrix": [{"nginx": n, "ubuntu": u} for n, u in pairs],
+            "ubuntu": ubuntu, "memory": memory, "memory_ubuntu": MEMORY_UBUNTU,
+            "latest": show(m.versions[-1][0])}
+
+
+def image_inputs_changed(base):
+    return any(f.startswith(IMAGE_INPUTS) for f in changed_since(base))
+
+
+def image_plan(m, every):
+    entries = images(m)
+    if every:
+        return entries
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        raise RuntimeError("images missing: GITHUB_TOKEN is not set, needed to read "
+                           f"the tags of {IMAGE}")
+    published = published_tags(token)
+    return [e for e in entries if e["tag"] not in published]
 
 
 def apply(m, available):
@@ -166,19 +267,20 @@ def render(m):
 
 
 def main(argv):
-    command = argv[1] if len(argv) == 2 else None
-    if command == "matrix":
-        print(json.dumps([{"nginx": n, "ubuntu": u}
-                          for n, u in load().pairs()]))
-    elif command == "pairs":
+    command, args = (argv[1], argv[2:]) if len(argv) > 1 else (None, [])
+    if command == "ci" and len(args) <= 1:
+        print(json.dumps(ci_plan(load(), args[0] if args else None)))
+    elif command == "images" and args in (["all"], ["missing"]):
+        print(json.dumps(image_plan(load(), args == ["all"])))
+    elif command == "images" and len(args) == 2 and args[0] == "since":
+        print(json.dumps(image_plan(load(), image_inputs_changed(args[1]))))
+    elif command == "pairs" and not args:
         print("\n".join(f"{n} {u}" for n, u in load().pairs()))
-    elif command == "latest":
+    elif command == "latest" and not args:
         print(show(load().versions[-1][0]))
-    elif command == "images":
-        print(json.dumps(images(load())))
-    elif command == "render":
+    elif command == "render" and not args:
         render(load())
-    elif command == "update":
+    elif command == "update" and not args:
         m, changes = apply(load(), releases())
         save(m)
         render(m)

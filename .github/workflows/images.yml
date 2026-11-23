@@ -3,8 +3,21 @@ name: Images
 on:
   push:
     branches: [master]
+    paths:
+      - docker/**
+      - config
+      - ngx_cache_purge_module.c
+      - t/nginx-versions.json
+      - t/ci/nginx_versions.py
+      - .github/workflows/images.yml
   pull_request:
   workflow_dispatch:
+    inputs:
+      rebuild:
+        description: Build every image, or only the tags not yet published
+        type: choice
+        options: [missing, all]
+        default: missing
 
 permissions: {}
 
@@ -19,26 +32,32 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      packages: read
     outputs:
       matrix: ${{ steps.read.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - id: read
         env:
           EVENT: ${{ github.event_name }}
+          REBUILD: ${{ inputs.rebuild }}
+          BEFORE: ${{ github.event.before }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          all=$(t/ci/nginx_versions.py images)
-          if [ "$EVENT" = pull_request ]; then
-              echo "matrix=$(jq -c 'map(select(.latest))' <<<"$all")" >> "$GITHUB_OUTPUT"
-          else
-              echo "matrix=$all" >> "$GITHUB_OUTPUT"
-          fi
+          case "$EVENT" in
+              pull_request) matrix=$(t/ci/nginx_versions.py images all | jq -c 'map(select(.latest))') ;;
+              push) matrix=$(t/ci/nginx_versions.py images since "$BEFORE") ;;
+              *) matrix=$(t/ci/nginx_versions.py images "$REBUILD") ;;
+          esac
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   image:
     name: nginx ${{ matrix.nginx }}${{ matrix.variant }}
     needs: versions
+    if: needs.versions.outputs.matrix != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -55,21 +74,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Tags
-        id: tags
-        env:
-          NGINX: ${{ matrix.nginx }}
-          VARIANT: ${{ matrix.variant }}
-          LATEST: ${{ matrix.latest }}
-        run: |
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/nginx-cache-purge"
-          tags="$image:$NGINX$VARIANT"
-          if [ "$LATEST" = true ] && [ -z "$VARIANT" ]; then
-              tags+=",$image:latest"
-          elif [ "$LATEST" = true ]; then
-              tags+=",$image:${VARIANT#-}"
-          fi
-          echo "tags=$tags" >> "$GITHUB_OUTPUT"
       - name: Build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -98,7 +102,7 @@ jobs:
           build-args: |
             NGINX_VERSION=${{ matrix.nginx }}
             VARIANT=${{ matrix.variant }}
-          tags: ${{ steps.tags.outputs.tags }}
+          tags: ${{ matrix.tags }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.description=nginx ${{ matrix.nginx }} with ngx_cache_purge

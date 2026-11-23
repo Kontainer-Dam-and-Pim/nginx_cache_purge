@@ -24,23 +24,38 @@ jobs:
     outputs:
       matrix: ${{ steps.read.outputs.matrix }}
       ubuntu: ${{ steps.read.outputs.ubuntu }}
+      memory: ${{ steps.read.outputs.memory }}
+      memory_ubuntu: ${{ steps.read.outputs.memory_ubuntu }}
       latest: ${{ steps.read.outputs.latest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - id: read
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          matrix=$(t/ci/nginx_versions.py matrix)
-          {
-              echo "matrix=$matrix"
-              echo "ubuntu=$(jq -c '[.[].ubuntu, "24.04"] | unique' <<<"$matrix")"
-              echo "latest=$(t/ci/nginx_versions.py latest)"
-          } >> "$GITHUB_OUTPUT"
+          case "$EVENT/$REF" in
+              pull_request/*) base=("$PR_BASE") ;;
+              push/*) base=("$BEFORE") ;;
+              workflow_dispatch/"refs/heads/$DEFAULT") base=() ;;
+              workflow_dispatch/*) base=("$(git merge-base "origin/$DEFAULT" HEAD)") ;;
+              *) base=() ;;
+          esac
+          plan=$(t/ci/nginx_versions.py ci "${base[@]}")
+          jq -r '"matrix=\(.matrix | tojson)", "ubuntu=\(.ubuntu | tojson)",
+                 "memory=\(.memory)", "memory_ubuntu=\(.memory_ubuntu)",
+                 "latest=\(.latest)"' <<<"$plan" >> "$GITHUB_OUTPUT"
 
   base:
     name: Base image / Ubuntu ${{ matrix.ubuntu }}
     needs: versions
+    if: needs.versions.outputs.ubuntu != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -68,6 +83,7 @@ jobs:
   test:
     name: nginx ${{ matrix.nginx }} / Ubuntu ${{ matrix.ubuntu }}
     needs: [versions, base]
+    if: needs.versions.outputs.matrix != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -100,6 +116,7 @@ jobs:
   memory:
     name: ${{ matrix.check }} / nginx ${{ needs.versions.outputs.latest }}
     needs: [versions, base]
+    if: needs.versions.outputs.memory == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -127,12 +144,12 @@ jobs:
           file: t/Dockerfile
           build-args: |
             NGINX_VERSION=${{ needs.versions.outputs.latest }}
-            UBUNTU_VERSION=24.04
+            UBUNTU_VERSION=${{ needs.versions.outputs.memory_ubuntu }}
             CC=${{ matrix.cc }}
             SANITIZE=${{ matrix.sanitize }}
           tags: ngx-cache-purge-test
           load: true
-          cache-from: type=gha,scope=base-24.04
+          cache-from: type=gha,scope=base-${{ needs.versions.outputs.memory_ubuntu }}
           provenance: false
       - name: Test::Nginx suites, failing on any memory error report
         env:
@@ -147,11 +164,11 @@ jobs:
     timeout-minutes: 5
     permissions: {}
     steps:
-      - name: Every job passed
+      - name: Every job passed or had nothing to check
         env:
           RESULTS: ${{ toJSON(needs) }}
         run: |
-          failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$RESULTS")
+          failed=$(jq -r 'to_entries[] | select(.value.result | IN("success", "skipped") | not) | "\(.key): \(.value.result)"' <<<"$RESULTS")
           if [ -n "$failed" ]; then
               echo "$failed"
               exit 1

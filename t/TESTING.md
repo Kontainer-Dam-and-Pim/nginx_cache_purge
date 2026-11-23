@@ -103,9 +103,9 @@ on nginx ≥ 1.27:
 
 | Workflow | When | What |
 |---|---|---|
-| `ci.yml` | push, PR, daily | every release in `nginx-versions.json`: build, struct layouts, Test::Nginx suites; newest nginx also on the old toolchain, under ASan + UBSan and under valgrind |
+| `ci.yml` | push, PR, daily | every release in `nginx-versions.json`: build, struct layouts, Test::Nginx suites; newest nginx also on the old toolchain, under ASan + UBSan and under valgrind. A change to nothing but `nginx-versions.json` and the README tests only the releases it adds, and the memory checks only when the newest changed |
 | `analysis.yml` | push, PR, weekly | strict warnings + cppcheck (gates); clang/gcc analyzers and CodeQL to code scanning; Semgrep; actionlint, zizmor, shellcheck, pyflakes; README table in sync |
-| `images.yml` | push to master (PR: newest only, not published) | official `nginx:<version>` and `-alpine` images, and Rocky Linux 9 with the nginx.org RPM (`-rocky`), with the module loaded, for every tested version that has one: built, smoke-tested (cache, purge, refill) and pushed to `ghcr.io/kontainer-dam-and-pim/nginx-cache-purge` |
+| `images.yml` | push to master touching the module, `docker/` or the version list (PR: newest only, not published) | official `nginx:<version>` and `-alpine` images, and Rocky Linux 9 with the nginx.org RPM (`-rocky`), with the module loaded, for every tested version that has one: built, smoke-tested (cache, purge, refill) and pushed to `ghcr.io/kontainer-dam-and-pim/nginx-cache-purge`. Every tag when the module, `config` or `docker/` changed, otherwise only the tags not published yet; a manual run picks either |
 | `nginx-releases.yml` | every five minutes, dispatched by `ci/systemd/` | adds new nginx.org releases to `nginx-versions.json` and the README in one pull request; dispatches CI, Analysis and Images on it and merges it once they pass |
 
 `nginx-versions.json` lists every nginx release from `floor` on, each with
