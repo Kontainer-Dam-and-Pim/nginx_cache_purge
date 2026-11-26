@@ -14,9 +14,10 @@ usage: nginx_versions.py ci [BASE]
        nginx_versions.py images all|missing|since BASE
                                   matrix (JSON) of the images to build, with their tags:
                                   per variant, every version with a base to build on
-                                  (an official nginx image, or an nginx.org el9 RPM for
-                                  Rocky). "missing" leaves out the tags already in
-                                  IMAGE, read with $GITHUB_TOKEN; "since" is "all" when
+                                  (an official nginx image with a linux/amd64 build, or
+                                  an nginx.org el9 RPM for Rocky), read with the tags
+                                  already in IMAGE via $GITHUB_TOKEN. "missing" leaves
+                                  out those published tags; "since" is "all" when
                                   the image inputs changed since BASE, else "missing".
        nginx_versions.py render   rewrite the README compatibility table from the file
        nginx_versions.py update   add nginx.org releases from the floor on to the file and
@@ -47,6 +48,9 @@ IMAGE = "ghcr.io/kontainer-dam-and-pim/nginx-cache-purge"
 DOWNLOADS = "https://nginx.org/download/"
 HUB = ("https://registry-1.docker.io", "library/nginx",
        "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/nginx:pull")
+BUILD_PLATFORM = ("linux", "amd64")
+MANIFEST_INDEX_TYPES = ("application/vnd.oci.image.index.v1+json",
+                        "application/vnd.docker.distribution.manifest.list.v2+json")
 EL_RPMS = ("https://nginx.org/packages/rhel/9/x86_64/RPMS/",
            "https://nginx.org/packages/mainline/rhel/9/x86_64/RPMS/")
 TARBALL = re.compile(r"nginx-(\d+)\.(\d+)\.(\d+)\.tar\.gz")
@@ -135,9 +139,11 @@ def fetch_json(url, headers):
 NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
 
 
-def registry_tags(registry, repository, token_url, token_headers):
-    token = fetch_json(token_url, token_headers)[0]["token"]
-    headers = {"Authorization": f"Bearer {token}"}
+def bearer(token_url, token_headers):
+    return {"Authorization": f"Bearer {fetch_json(token_url, token_headers)[0]['token']}"}
+
+
+def registry_tags(registry, repository, headers):
     tags, path = set(), f"/v2/{repository}/tags/list?n=10000"
     while path:
         page, link = fetch_json(registry + path, headers)
@@ -147,9 +153,14 @@ def registry_tags(registry, repository, token_url, token_headers):
     return tags
 
 
-def hub_tags():
-    registry, repository, token_url = HUB
-    return registry_tags(registry, repository, token_url, {})
+def hub_platforms(reference, headers):
+    registry, repository, _ = HUB
+    url = f"{registry}/v2/{repository}/manifests/{reference}"
+    index, _ = fetch_json(url, {**headers, "Accept": ", ".join(MANIFEST_INDEX_TYPES)})
+    if index.get("mediaType") not in MANIFEST_INDEX_TYPES:
+        raise RuntimeError(f"GET {url}: not a manifest index: {index.get('mediaType')}")
+    return {(m["platform"]["os"], m["platform"]["architecture"])
+            for m in index["manifests"]}
 
 
 def published_tags(github_token):
@@ -157,8 +168,8 @@ def published_tags(github_token):
     basic = base64.b64encode(f"x:{github_token}".encode()).decode()
     return registry_tags(
         f"https://{host}", repository,
-        f"https://{host}/token?service={host}&scope=repository:{repository}:pull",
-        {"Authorization": f"Basic {basic}"})
+        bearer(f"https://{host}/token?service={host}&scope=repository:{repository}:pull",
+               {"Authorization": f"Basic {basic}"}))
 
 
 def tag(version, variant):
@@ -172,12 +183,20 @@ def image_tags(version, variant, latest):
     return tags
 
 
-def images(m):
+def images(m, published):
     newest = m.versions[-1][0]
-    rpms, hub = el_rpms(), hub_tags()
+    registry, repository, token_url = HUB
+    hub_headers = bearer(token_url, {})
+    rpms, hub = el_rpms(), registry_tags(registry, repository, hub_headers)
+
+    def on_hub(v, variant):
+        t = tag(v, variant)
+        return t in hub and (
+            t in published or BUILD_PLATFORM in hub_platforms(t, hub_headers))
+
     variants = {
-        "": lambda v: tag(v, "") in hub,
-        "-alpine": lambda v: tag(v, "-alpine") in hub,
+        "": lambda v: on_hub(v, ""),
+        "-alpine": lambda v: on_hub(v, "-alpine"),
         "-rocky": lambda v: v in rpms,
     }
     return [{"nginx": show(v), "variant": variant, "latest": v == newest,
@@ -218,14 +237,14 @@ def image_inputs_changed(base):
 
 
 def image_plan(m, every):
-    entries = images(m)
-    if every:
-        return entries
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
-        raise RuntimeError("images missing: GITHUB_TOKEN is not set, needed to read "
+        raise RuntimeError("images: GITHUB_TOKEN is not set, needed to read "
                            f"the tags of {IMAGE}")
     published = published_tags(token)
+    entries = images(m, published)
+    if every:
+        return entries
     return [e for e in entries if e["tag"] not in published]
 
 
